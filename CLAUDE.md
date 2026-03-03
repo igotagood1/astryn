@@ -26,27 +26,46 @@ python bot.py
 uv pip install -r requirements.txt
 ```
 
+## Phase Status
+
+| Phase | Focus | Status |
+|-------|-------|--------|
+| 1 | Chat via Telegram + Ollama | ✅ Complete |
+| 2 | Tool use — file r/w, shell, project scoping, model switching | 🔲 Next |
+| 3 | SQLite persistence, launchd services, Anthropic fallback | 🔲 Planned |
+| 4 | Cloudflare Tunnel, webhooks, GitHub integration, Draft & Compose | 🔲 Planned |
+| 5+ | MCP servers, persistent memory, Android app | 🔲 Future |
+
 ## Architecture
 
 ### astryn-core
 - `api/main.py` — FastAPI app, mounts routers
-- `api/routes/chat.py` — `POST /chat`, `DELETE /chat/{session_id}`; in-memory sessions keyed by session_id (Phase 1 — SQLite planned for Phase 2)
-- `api/routes/health.py` — `GET /health`, pings Ollama and returns model info
-- `llm/base.py` — `LLMProvider` ABC and `LLMResponse` dataclass; all providers must implement `chat()`, `is_available()`, and `model_name`
-- `llm/providers/ollama.py` — Concrete `OllamaProvider`, calls Ollama's `/api/chat`
-- `llm/router.py` — `chat_with_fallback()`: currently no fallback (Phase 1 raises if Ollama is down); designed for future provider fallback chain
-- `llm/config.py` — `AstrynSettings` via pydantic-settings; reads from `.env`
+- `api/routes/chat.py` — `POST /chat`, `DELETE /chat/{session_id}`; runs agentic loop (Phase 2+), in-memory sessions (Phase 1)
+- `api/routes/health.py` — `GET /health`, pings Ollama
+- `api/routes/models.py` — `GET /models`, `POST /models/active` (Phase 2+)
+- `llm/base.py` — `LLMProvider` ABC and `LLMResponse` dataclass
+- `llm/providers/ollama.py` — `OllamaProvider`, calls Ollama's `/api/chat`; supports tool_calls (Phase 2+)
+- `llm/router.py` — provider factory, active model state, fallback chain (Phase 3+)
+- `llm/agent.py` — agentic loop: executes tool calls, handles confirmation pause/resume (Phase 2+)
+- `llm/config.py` — `AstrynSettings` via pydantic-settings
+- `tools/safety.py` — path validation (scoped to `~/repos`), shell command whitelist (Phase 2+)
+- `tools/definitions.py` — tool JSON schemas passed to LLM (Phase 2+)
+- `tools/executor.py` — tool execution functions (Phase 2+)
+- `db/` — SQLite via aiosqlite: sessions, session state, pending confirmations (Phase 3+)
 
 ### astryn-telegram
-- `bot.py` — Entry point; registers command and message handlers
-- `core_client.py` — Async HTTP client for astryn-core; uses `X-Api-Key` header and `ASTRYN_CORE_URL`
-- `handlers/message.py` — Restricts to `ALLOWED_USER_ID`; uses Telegram `user_id` as session_id
+- `bot.py` — entry point; registers handlers including `CallbackQueryHandler` (Phase 2+)
+- `core_client.py` — async HTTP client for astryn-core
+- `handlers/message.py` — handles text messages; renders confirmation inline keyboards (Phase 2+)
 - `handlers/commands.py` — `/help`, `/clear`, `/status`, `/model`
+- `handlers/callbacks.py` — inline keyboard button handler for tool confirmations (Phase 2+)
 
 ### Key Design Decisions
-- Authentication between telegram bot and core is via `X-Api-Key` header
-- Adding a new LLM provider means implementing `LLMProvider` in `llm/providers/` and wiring it into `llm/router.py`
-- The system prompt defining Astryn's persona lives in `api/routes/chat.py`
+- All file/shell operations are scoped to `~/repos` — enforced in `tools/safety.py`
+- Write/exec tool calls require Telegram inline keyboard confirmation before executing
+- Active model is global state in `llm/router.py`; switched via `/model use <name>`
+- Adding a new LLM provider: implement `LLMProvider` in `llm/providers/`, add a `case` to `router.py`
+- The coworker system prompt (challenge, alternatives, confirm before acting) lives in `api/routes/chat.py`
 
 ## Project Context
 

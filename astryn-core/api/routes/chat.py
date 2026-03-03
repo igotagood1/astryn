@@ -1,66 +1,93 @@
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
-from llm.router import chat_with_fallback
+
+from api.state import Session, pending_confirmations, sessions
+from llm.agent import run_agent
 from llm.config import settings
+from llm.router import get_provider
+from prompts.system import SYSTEM_PROMPT
 
 router = APIRouter()
-
-SYSTEM_PROMPT = """You are Astryn, a personal AI assistant for a senior software engineer.
-You are direct, technical, and precise. You challenge assumptions and ask clarifying
-questions rather than making guesses. You prefer code examples over prose.
-You never pad responses with unnecessary caveats."""
-
-# In-memory sessions. Resets on restart. Replaced with SQLite in Phase 2.
-sessions: dict[str, list[dict]] = {}
 
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: str = 'default'
+    session_id: str = "default"
+
+
+class ConfirmationInfo(BaseModel):
+    id: str
+    preview: str
 
 
 class ChatResponse(BaseModel):
     reply: str
     model: str
-    used_fallback: bool
+    used_fallback: bool = False
+    confirmation: ConfirmationInfo | None = None
 
 
-@router.post('/chat', response_model=ChatResponse)
+def _get_or_create(session_id: str) -> Session:
+    if session_id not in sessions:
+        sessions[session_id] = Session()
+    return sessions[session_id]
+
+
+def _trim(history: list[dict]) -> list[dict]:
+    max_messages = settings.max_history_turns * 2
+    return history[-max_messages:] if len(history) > max_messages else history
+
+
+@router.post("/chat", response_model=ChatResponse)
 async def chat(
     req: ChatRequest,
     x_api_key: str = Header(...),
 ):
     if x_api_key != settings.astryn_api_key:
-        raise HTTPException(status_code=401, detail='Invalid API key')
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
-    history = sessions.get(req.session_id, [])
-    history.append({'role': 'user', 'content': req.message})
+    session = _get_or_create(req.session_id)
+    session.history = _trim(session.history)
+    session.history.append({"role": "user", "content": req.message})
 
-    max_messages = settings.max_history_turns * 2
-    if len(history) > max_messages:
-        history = history[-max_messages:]
+    provider = get_provider()
+    if not await provider.is_available():
+        raise HTTPException(status_code=503, detail="Ollama is not available. Is it running?")
 
-    response, used_fallback = await chat_with_fallback(
-        messages=history,
+    result = await run_agent(
+        provider=provider,
+        messages=list(session.history),
         system=SYSTEM_PROMPT,
+        session_id=req.session_id,
+        session_state=session.state,
     )
 
-    history.append({'role': 'assistant', 'content': response.content})
-    sessions[req.session_id] = history
+    session.history = result.messages
 
-    return ChatResponse(
-        reply=response.content,
-        model=response.model,
-        used_fallback=used_fallback,
-    )
+    if result.pending:
+        pending_confirmations[result.pending.id] = result.pending
+        return ChatResponse(
+            reply=result.reply,
+            model=result.model,
+            confirmation=ConfirmationInfo(id=result.pending.id, preview=result.pending.preview),
+        )
+
+    return ChatResponse(reply=result.reply, model=result.model)
 
 
-@router.delete('/chat/{session_id}')
+@router.delete("/chat/{session_id}")
 async def clear_session(
     session_id: str,
     x_api_key: str = Header(...),
 ):
     if x_api_key != settings.astryn_api_key:
-        raise HTTPException(status_code=401, detail='Invalid API key')
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
     sessions.pop(session_id, None)
-    return {'cleared': session_id}
+
+    # Clean up any pending confirmations that belong to this session
+    stale = [k for k, v in pending_confirmations.items() if v.session_id == session_id]
+    for k in stale:
+        del pending_confirmations[k]
+
+    return {"cleared": session_id}
