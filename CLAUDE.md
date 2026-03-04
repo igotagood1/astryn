@@ -67,6 +67,13 @@ uv pip install -r requirements.txt
 - Adding a new LLM provider: implement `LLMProvider` in `llm/providers/`, add a `case` to `router.py`
 - The coworker system prompt (challenge, alternatives, confirm before acting) lives in `api/routes/chat.py`
 
+## Branching Rules
+
+- Before starting any work, check the current branch with `git branch --show-current`.
+- If the work is unrelated to the current branch's scope (different feature, fix, or phase), stop and propose a new branch name before touching any files.
+- Never commit work for two different concerns on the same branch — keep branches focused.
+- Branch naming convention: `feat/<name>`, `fix/<name>`, `refactor/<name>`, `docs/<name>`.
+
 ## Project Context
 
 Check `tmp/docs/` for project definition, vision, and planning documents (gitignored, not committed).

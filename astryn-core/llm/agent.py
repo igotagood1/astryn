@@ -63,12 +63,44 @@ class AgentResult:
     If `pending` is set, the loop is paused and the caller should present
     the confirmation to the user before calling resume_agent().
     If `pending` is None, `reply` contains the agent's final answer.
+    If `projects` is set, list_projects was called and the client should
+    render them as selectable buttons rather than plain text.
     """
 
     reply: str
     model: str
     messages: list[dict]
     pending: PendingConfirmation | None = None
+    projects: list[str] | None = None
+
+
+def _extract_projects(messages: list[dict]) -> list[str] | None:
+    """Return project names if list_projects was called in this loop.
+
+    Scans the message history for list_projects tool calls, finds the
+    corresponding tool result, and parses the project names out of it.
+    Returns None if list_projects was not called.
+    """
+    # Collect tool_call_ids for any list_projects calls
+    list_projects_ids: set[str] = set()
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls") or []:
+                if tc.get("function", {}).get("name") == "list_projects":
+                    list_projects_ids.add(tc.get("id", ""))
+
+    if not list_projects_ids:
+        return None
+
+    # Find the matching tool result and parse project names from it
+    for msg in messages:
+        if msg.get("role") == "tool" and msg.get("tool_call_id") in list_projects_ids:
+            lines = msg.get("content", "").splitlines()
+            projects = [line[2:].strip() for line in lines if line.startswith("- ")]
+            if projects:
+                return projects
+
+    return None
 
 
 async def run_agent(
@@ -97,7 +129,12 @@ async def run_agent(
                     model=response.model,
                     messages=messages,
                 )
-            return AgentResult(reply=response.content, model=response.model, messages=messages)
+            return AgentResult(
+                reply=response.content,
+                model=response.model,
+                messages=messages,
+                projects=_extract_projects(messages),
+            )
 
         outcome = await _process_tool_calls(
             tool_calls=response.tool_calls,

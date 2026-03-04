@@ -1,5 +1,5 @@
 import logging
-from typing import TypedDict
+from typing import TypedDict  # used for _ChatResult
 
 import telegram.error
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
@@ -11,24 +11,19 @@ from core_client import send_message
 logger = logging.getLogger(__name__)
 
 
-class _ConfirmationData(TypedDict):
-    """Shape of the confirmation object inside a ChatResult."""
-
-    id: str
-    preview: str
-
-
 class _ChatResult(TypedDict, total=False):
     """Shape of the JSON response from POST /chat and POST /confirm/{id}.
 
-    `total=False` means the type checker treats all fields as optional.
-    In practice, reply and model are always present. confirmation is only
-    included when the agent is paused waiting for user approval.
+    `total=False` means all fields are optional to the type checker.
+    In practice, reply and model are always present.
+    action is present when the agent needs the client to render something
+    (a confirmation prompt, a project picker, etc.). Its `type` field
+    determines which keys to expect alongside it.
     """
 
     reply: str
     model: str
-    confirmation: _ConfirmationData | None
+    action: dict | None  # typed as dict; dispatch via action["type"]
 
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -48,36 +43,52 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _send_result(message: Message, result: _ChatResult):
-    """Send a chat or confirmation result back to the user."""
-    reply = result.get("reply", "")
-    confirmation = result.get("confirmation")
+    """Send a chat or confirmation result back to the user.
 
-    if confirmation:
-        preview = confirmation["preview"]
-        text = f"{reply}\n\n{preview}".strip() if reply else preview
-        keyboard = InlineKeyboardMarkup(
-            [
+    Dispatches on action["type"] to render the appropriate UI. Adding a new
+    interactive response type means adding a new case here and a new Action
+    subclass in astryn-core's schemas — nothing else needs to change.
+    """
+    reply = result.get("reply", "")
+    action = result.get("action")
+    action_type = action.get("type") if action else None
+
+    match action_type:
+        case "confirmation":
+            preview = action["preview"]
+            text = f"{reply}\n\n{preview}".strip() if reply else preview
+            keyboard = InlineKeyboardMarkup(
                 [
-                    InlineKeyboardButton(
-                        "✅ Approve",
-                        callback_data=f"confirm:{confirmation['id']}:approve",
-                    ),
-                    InlineKeyboardButton(
-                        "❌ Reject",
-                        callback_data=f"confirm:{confirmation['id']}:reject",
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        "💬 More context",
-                        callback_data=f"confirm:{confirmation['id']}:context",
-                    ),
-                ],
+                    [
+                        InlineKeyboardButton(
+                            "✅ Approve",
+                            callback_data=f"confirm:{action['id']}:approve",
+                        ),
+                        InlineKeyboardButton(
+                            "❌ Reject",
+                            callback_data=f"confirm:{action['id']}:reject",
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "💬 More context",
+                            callback_data=f"confirm:{action['id']}:context",
+                        ),
+                    ],
+                ]
+            )
+            await _send_chunked(message, text, reply_markup=keyboard)
+
+        case "project_select":
+            rows = [
+                [InlineKeyboardButton(p, callback_data=f"project:{p}")]
+                for p in action["projects"]
             ]
-        )
-        await _send_chunked(message, text, reply_markup=keyboard)
-    else:
-        await _send_chunked(message, reply or "(no reply)")
+            keyboard = InlineKeyboardMarkup(rows)
+            await _send_chunked(message, reply or "Choose a project:", reply_markup=keyboard)
+
+        case _:
+            await _send_chunked(message, reply or "(no reply)")
 
 
 async def _send_chunked(message: Message, text: str, reply_markup=None):

@@ -29,6 +29,8 @@ async def set_project(name: str, session_state: SessionState) -> str:
 
 
 async def list_files(path: str = ".", active_project: str | None = None) -> str:
+    if not active_project:
+        return "No project is active. Use list_projects to see available projects, then set_project to choose one."
     resolved = validate_path(path, active_project)
     if not resolved.exists():
         return f"Path '{path}' does not exist."
