@@ -74,6 +74,11 @@ uv pip install -r requirements.txt
 - Never commit work for two different concerns on the same branch — keep branches focused.
 - Branch naming convention: `feat/<name>`, `fix/<name>`, `refactor/<name>`, `docs/<name>`.
 
+**Creating a new branch — always follow these steps in order:**
+1. `git fetch origin` — update remote refs
+2. `git pull origin main` — bring main up to date
+3. `git checkout -b <branch-name> origin/main` — branch from origin/main, not from wherever HEAD is
+
 ## Project Context
 
 Check `tmp/docs/` for project definition, vision, and planning documents (gitignored, not committed).

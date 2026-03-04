@@ -1,7 +1,7 @@
 # Default model to pull if not already downloaded
 MODEL ?= qwen2.5-coder:7b
 
-.PHONY: start start-detached stop logs build _ensure-ollama _ensure-model
+.PHONY: start start-detached dev stop logs build restart-telegram _ensure-ollama _ensure-model
 
 ## start: Ensure Ollama is running, pull model if needed, start services (foreground)
 start: _ensure-model
@@ -10,6 +10,14 @@ start: _ensure-model
 ## start-detached: Same as start but runs services in the background
 start-detached: _ensure-model
 	docker compose up -d
+
+## dev: Start with hot reload — core restarts on file changes, edit telegram then `make restart-telegram`
+dev: _ensure-model
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+## restart-telegram: Restart the telegram bot container to pick up code changes (dev only)
+restart-telegram:
+	docker compose restart astryn-telegram
 
 ## stop: Stop all running services
 stop:

@@ -1,0 +1,12 @@
+services:
+
+  astryn-core:
+    volumes:
+      - ${HOME}/repos:/root/repos
+      - ./astryn-core:/app # mount source over the baked-in copy
+    command: >
+      uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  astryn-telegram:
+    volumes:
+      - ./astryn-telegram:/app # mount source over the baked-in copy
