@@ -1,14 +1,16 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import services.session as session_service
 from api.deps import verify_api_key
 from api.schemas import ChatRequest, ChatResponse, ConfirmationAction
+from db.engine import get_db
 from llm.agent import run_agent
 from llm.router import get_provider
 from tools.registry import TOOLS
-from store.memory import pending_confirmations
+from store.domain import pending_confirmations
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +18,9 @@ router = APIRouter()
 
 
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
-async def chat(req: ChatRequest):
-    session = session_service.get_or_create(req.session_id)
-    session_service.add_user_message(session, req.message)
+async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+    state = await session_service.ensure_session(db, req.session_id)
+    await session_service.add_user_message(db, req.session_id, req.message)
 
     provider = get_provider()
     if not await provider.is_available():
@@ -26,16 +28,21 @@ async def chat(req: ChatRequest):
 
     logger.info("Chat request: session=%s model=%s", req.session_id, provider.model_name)
 
+    history = await session_service.get_history_for_llm(db, req.session_id)
+    old_count = len(history)
+
     result = await run_agent(
         provider=provider,
-        messages=list(session.history),
-        system=session_service.build_system_prompt(session.state),
+        messages=list(history),
+        system=session_service.build_system_prompt(state),
         session_id=req.session_id,
-        session_state=session.state,
-        tools=TOOLS if session.state.active_project else [],
+        session_state=state,
+        tools=TOOLS if state.active_project else [],
+        db=db,
     )
 
-    session.history = result.messages
+    await session_service.persist_agent_messages(db, req.session_id, old_count, result.messages)
+    await session_service.update_state(db, req.session_id, state)
 
     if result.pending:
         pending_confirmations[result.pending.id] = result.pending
@@ -54,6 +61,6 @@ async def chat(req: ChatRequest):
 
 
 @router.delete("/chat/{session_id}", dependencies=[Depends(verify_api_key)])
-async def clear_session(session_id: str):
-    session_service.clear(session_id)
+async def clear_session(session_id: str, db: AsyncSession = Depends(get_db)):
+    await session_service.clear(db, session_id)
     return {"cleared": session_id}

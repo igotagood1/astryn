@@ -86,6 +86,23 @@ Always do this before committing — if a package is imported but missing from `
 2. `git pull origin main` — bring main up to date
 3. `git checkout -b <branch-name> origin/main` — branch from origin/main, not from wherever HEAD is
 
+## Development Workflow (TDD with Agents)
+
+The project follows a test-driven workflow using specialized agents:
+
+1. **test-writer** — Runs FIRST. Reads the design/plan and writes tests that define expected behavior before any code is written. Tests should fail initially.
+2. **Implement** — Write the code to make the tests pass.
+3. **code-reviewer** + **design-reviewer** — Run AFTER implementation. Review for correctness and architectural fit.
+4. **security-reviewer** — Run AFTER implementation. Searches for live CVEs, audits dependencies, checks for injection vectors, and validates the tool execution sandbox. Focused on "will this break or be attacked in production?"
+
+**Running tests** (from `astryn-core/`):
+```bash
+pytest                        # all tests
+pytest tests/api/             # API tests only
+pytest -m "not integration"   # skip tests needing real infra
+pytest -m integration         # only integration tests
+```
+
 ## Project Context
 
 Check `tmp/docs/` for project definition, vision, and planning documents (gitignored, not committed).

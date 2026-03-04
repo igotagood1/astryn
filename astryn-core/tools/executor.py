@@ -4,7 +4,7 @@ import subprocess
 
 from pydantic import ValidationError
 
-from store.memory import SessionState
+from store.domain import SessionState
 from tools.models import (
     AnyTool,
     ApplyDiff,

@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(ollama list:*)",
-      "Bash(brew install:*)"
+      "Bash(brew install:*)",
+      "Bash(source:*)"
     ]
   }
 }

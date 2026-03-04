@@ -1,10 +1,12 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import services.session as session_service
 from api.deps import verify_api_key
 from api.schemas import SetProjectRequest
+from db.engine import get_db
 from tools.safety import REPOS_ROOT, SecurityError, validate_path
 
 logger = logging.getLogger(__name__)
@@ -22,7 +24,10 @@ async def list_projects() -> list[str]:
 
 
 @router.post("/project/set", dependencies=[Depends(verify_api_key)])
-async def set_project(req: SetProjectRequest) -> dict:
+async def set_project(
+    req: SetProjectRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """Set the active project for a session directly, without an LLM roundtrip."""
     try:
         path = validate_path(req.name)
@@ -32,7 +37,9 @@ async def set_project(req: SetProjectRequest) -> dict:
     if not path.is_dir():
         raise HTTPException(status_code=404, detail=f"'{req.name}' is not a project in ~/repos.")
 
-    session = session_service.get_or_create(req.session_id)
-    session.state.active_project = req.name
+    state = await session_service.ensure_session(db, req.session_id)
+    state.active_project = req.name
+    await session_service.update_state(db, req.session_id, state)
+
     logger.info("Project set directly: session=%s project=%s", req.session_id, req.name)
     return {"active_project": req.name}

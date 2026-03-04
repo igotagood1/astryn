@@ -12,6 +12,7 @@ class AstrynSettings(BaseSettings):
     astryn_default_model: str = "llama3.1:8b"
     astryn_api_key: str
     max_history_turns: int = 20
+    database_url: str
 
     model_config = SettingsConfigDict(env_file=".env")
 

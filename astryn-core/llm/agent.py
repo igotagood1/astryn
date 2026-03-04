@@ -3,7 +3,10 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 
-from store.memory import SessionState
+from sqlalchemy.ext.asyncio import AsyncSession
+
+import db.repository as repo
+from store.domain import SessionState
 from llm.base import LLMProvider
 from tools.executor import build_preview, execute_tool, requires_confirmation
 from tools.registry import TOOLS
@@ -19,12 +22,7 @@ MODEL_TOOL_UNSUPPORTED_REPLY = (
 
 
 def _looks_like_failed_tool_call(content: str) -> bool:
-    """Detect when a model outputs a tool call as plain text instead of using the tool API.
-
-    Some models that don't properly support tool use will respond with a JSON
-    string describing the call rather than a structured tool_calls list. This
-    heuristic catches that case so we can surface a helpful error message.
-    """
+    """Detect when a model outputs a tool call as plain text instead of using the tool API."""
     content = content.strip()
     if not content.startswith("{"):
         return False
@@ -39,12 +37,7 @@ def _looks_like_failed_tool_call(content: str) -> bool:
 
 @dataclass
 class PendingConfirmation:
-    """Snapshot of a paused agent loop waiting for user approval.
-
-    When the agent encounters a tool that requires confirmation, it stops,
-    stores everything needed to resume, and returns this to the API layer.
-    The API layer persists it in pending_confirmations until the user responds.
-    """
+    """Snapshot of a paused agent loop waiting for user approval."""
 
     id: str
     session_id: str
@@ -60,12 +53,7 @@ class PendingConfirmation:
 
 @dataclass
 class AgentResult:
-    """Outcome of a completed or paused agent loop iteration.
-
-    If `pending` is set, the loop is paused and the caller should present
-    the confirmation to the user before calling resume_agent().
-    If `pending` is None, `reply` contains the agent's final answer.
-    """
+    """Outcome of a completed or paused agent loop iteration."""
 
     reply: str
     model: str
@@ -79,16 +67,13 @@ async def run_agent(
     system: str,
     session_id: str,
     session_state: SessionState,
+    db: AsyncSession,
     tools: list[dict] | None = None,
 ) -> AgentResult:
     """Run the agentic tool loop.
 
     Calls the LLM repeatedly, executing safe tool calls immediately and
-    pausing on any tool that requires user confirmation. Returns either a
-    final reply or a paused AgentResult with a PendingConfirmation.
-
-    Pass an empty tools list to force a plain conversational response with no
-    tool calls available — used when no project is selected.
+    pausing on any tool that requires user confirmation.
     """
     effective_tools = tools if tools is not None else TOOLS
 
@@ -114,12 +99,13 @@ async def run_agent(
             session_id=session_id,
             session_state=session_state,
             provider=provider,
+            db=db,
         )
 
         if isinstance(outcome, AgentResult):
             return outcome
 
-        messages = outcome  # updated messages after all safe tool calls ran
+        messages = outcome
 
     logger.warning("Agent hit max iterations without a final reply: session=%s", session_id)
     return AgentResult(
@@ -133,18 +119,25 @@ async def resume_agent(
     provider: LLMProvider,
     pending: PendingConfirmation,
     approved: bool,
+    db: AsyncSession,
 ) -> AgentResult:
-    """Resume the agent after the user approves or rejects a pending tool call.
-
-    Executes or skips the tool, then continues the loop with any remaining
-    tool calls from the same LLM response before asking the LLM again.
-    """
+    """Resume the agent after the user approves or rejects a pending tool call."""
     if approved:
         logger.info("Executing approved tool: %s", pending.tool_name)
         tool_result = await execute_tool(pending.tool_name, pending.tool_args, pending.session_state)
     else:
         logger.info("Tool rejected by user: %s", pending.tool_name)
         tool_result = "User rejected this action. Do not retry it."
+
+    await repo.log_tool_call(
+        db=db,
+        external_id=pending.session_id,
+        tool_name=pending.tool_name,
+        tool_args=pending.tool_args,
+        required_confirmation=True,
+        approved=approved,
+        result=tool_result if approved else None,
+    )
 
     messages = [
         *pending.messages,
@@ -159,6 +152,7 @@ async def resume_agent(
             session_id=pending.session_id,
             session_state=pending.session_state,
             provider=provider,
+            db=db,
         )
         if isinstance(outcome, AgentResult):
             return outcome
@@ -170,6 +164,7 @@ async def resume_agent(
         system=pending.system,
         session_id=pending.session_id,
         session_state=pending.session_state,
+        db=db,
     )
 
 
@@ -180,13 +175,12 @@ async def _process_tool_calls(
     session_id: str,
     session_state: SessionState,
     provider: LLMProvider,
+    db: AsyncSession,
 ) -> "list[dict] | AgentResult":
     """Process a batch of tool calls sequentially.
 
-    Runs safe tools immediately. Pauses and returns an AgentResult with a
-    PendingConfirmation when a tool that requires user approval is encountered.
-    Remaining unprocessed calls are stored on the PendingConfirmation so they
-    can be picked up after the user responds.
+    Runs safe tools immediately. Pauses on tools that require confirmation.
+    Logs each execution to the tool_audit table.
     """
     for i, tool_call in enumerate(tool_calls):
         fn = tool_call.get("function", {})
@@ -216,7 +210,25 @@ async def _process_tool_calls(
             )
 
         logger.info("Executing tool immediately: %s session=%s", tool_name, session_id)
-        result = await execute_tool(tool_name, tool_args, session_state)
+        tool_error = None
+        try:
+            result = await execute_tool(tool_name, tool_args, session_state)
+        except Exception as e:
+            logger.error("Tool execution failed: %s error=%s", tool_name, e)
+            result = f"Tool execution failed: {e}"
+            tool_error = str(e)
+
+        await repo.log_tool_call(
+            db=db,
+            external_id=session_id,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            required_confirmation=False,
+            approved=None,
+            result=result if tool_error is None else None,
+            error=tool_error,
+        )
+
         messages = [*messages, {"role": "tool", "tool_call_id": tool_call_id, "content": result}]
 
     return messages
