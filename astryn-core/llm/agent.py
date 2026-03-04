@@ -74,16 +74,17 @@ class AgentResult:
     projects: list[str] | None = None
 
 
-def _extract_projects(messages: list[dict]) -> list[str] | None:
-    """Return project names if list_projects was called in this loop.
+def _extract_projects(messages: list[dict], history_len: int) -> list[str] | None:
+    """Return project names if list_projects was called in the *current* agent turn.
 
-    Scans the message history for list_projects tool calls, finds the
-    corresponding tool result, and parses the project names out of it.
-    Returns None if list_projects was not called.
+    Only scans messages added during this run_agent call (after history_len) so
+    that a list_projects call from a previous conversation turn doesn't keep
+    triggering project buttons on every subsequent reply.
     """
-    # Collect tool_call_ids for any list_projects calls
+    current_turn = messages[history_len:]
+
     list_projects_ids: set[str] = set()
-    for msg in messages:
+    for msg in current_turn:
         if msg.get("role") == "assistant":
             for tc in msg.get("tool_calls") or []:
                 if tc.get("function", {}).get("name") == "list_projects":
@@ -92,8 +93,7 @@ def _extract_projects(messages: list[dict]) -> list[str] | None:
     if not list_projects_ids:
         return None
 
-    # Find the matching tool result and parse project names from it
-    for msg in messages:
+    for msg in current_turn:
         if msg.get("role") == "tool" and msg.get("tool_call_id") in list_projects_ids:
             lines = msg.get("content", "").splitlines()
             projects = [line[2:].strip() for line in lines if line.startswith("- ")]
@@ -116,6 +116,8 @@ async def run_agent(
     pausing on any tool that requires user confirmation. Returns either a
     final reply or a paused AgentResult with a PendingConfirmation.
     """
+    history_len = len(messages)  # mark where this turn's new messages begin
+
     for iteration in range(MAX_ITERATIONS):
         logger.debug("Agent iteration %d: session=%s", iteration + 1, session_id)
         response = await provider.chat(messages, system, tools=TOOLS)
@@ -133,7 +135,7 @@ async def run_agent(
                 reply=response.content,
                 model=response.model,
                 messages=messages,
-                projects=_extract_projects(messages),
+                projects=_extract_projects(messages, history_len),
             )
 
         outcome = await _process_tool_calls(

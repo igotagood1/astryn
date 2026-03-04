@@ -19,7 +19,7 @@ class ChatRequest(BaseModel):
 class ConfirmationAction(BaseModel):
     """Agent is paused, waiting for the user to approve or reject a tool call."""
 
-    type: Literal["confirmation"]
+    type: Literal["confirmation"] = "confirmation"
     id: str
     preview: str
 
@@ -27,7 +27,7 @@ class ConfirmationAction(BaseModel):
 class ProjectSelectAction(BaseModel):
     """Agent called list_projects — client should render these as selectable buttons."""
 
-    type: Literal["project_select"]
+    type: Literal["project_select"] = "project_select"
     projects: list[str]
 
 

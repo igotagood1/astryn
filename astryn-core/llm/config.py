@@ -9,7 +9,7 @@ class ProviderConfig(BaseModel):
 
 class AstrynSettings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
-    astryn_default_model: str = "qwen2.5-coder:7b"
+    astryn_default_model: str = "llama3.1:8b"
     astryn_api_key: str
     max_history_turns: int = 20
 
