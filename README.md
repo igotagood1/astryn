@@ -109,6 +109,27 @@ docker compose up
 
 ---
 
+## Development
+
+Use `make dev` instead of `make start` when working on the codebase:
+
+```bash
+make dev
+```
+
+This mounts the source code as volumes so changes are picked up without rebuilding images:
+
+- **astryn-core** — uvicorn runs with `--reload` and restarts automatically when you save a `.py` file
+- **astryn-telegram** — source is mounted, but the bot has no file watcher; restart it after changes:
+
+```bash
+make restart-telegram
+```
+
+Run `make build` only when you change `requirements.txt` — everything else is handled by the mounts.
+
+---
+
 ## Notes
 
 **Your repos:** Astryn can read and edit files under `~/repos` on your machine. That directory is mounted into the container automatically. If your projects live somewhere else, update the volume in `docker-compose.yml`:
