@@ -1,4 +1,5 @@
 # Astryn
+This project is being used as a learning tool for myself. I hope to turn it into something productive for my life and possibly the lives of others if they so wish.
 
 A personal AI assistant you control from Telegram, running entirely on your own machine. Send a message from your phone, get a response from a local LLM — with the ability to read files, make edits, and run shell commands in your repos.
 

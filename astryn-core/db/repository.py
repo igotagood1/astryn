@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -69,9 +70,12 @@ async def get_state(db: AsyncSession, external_id: str) -> SessionState:
     state_row = result.scalar_one_or_none()
 
     if state_row is None:
-        return SessionState()
+        return SessionState(last_activity_at=session.updated_at)
 
-    return SessionState(active_project=state_row.active_project)
+    return SessionState(
+        active_project=state_row.active_project,
+        last_activity_at=session.updated_at,
+    )
 
 
 async def update_state(db: AsyncSession, external_id: str, state: SessionState) -> None:
@@ -120,11 +124,22 @@ def _row_to_msg(row: MessageModel) -> dict:
     return msg
 
 
+async def _touch_session(session: SessionModel) -> None:
+    """Update the session's updated_at timestamp.
+
+    SQLAlchemy's onupdate only fires on explicit UPDATEs to the row itself,
+    not when child rows (messages) are added. We touch it manually so that
+    staleness detection sees the real last-activity time.
+    """
+    session.updated_at = datetime.now(UTC)
+
+
 async def add_message(db: AsyncSession, external_id: str, msg: dict) -> None:
     """Append a single message to a session's history."""
     session = await _resolve_session(db, external_id)
     row = _msg_to_row(session.id, msg)
     db.add(row)
+    await _touch_session(session)
     await db.flush()
 
 
@@ -135,6 +150,7 @@ async def add_messages(db: AsyncSession, external_id: str, msgs: list[dict]) -> 
     session = await _resolve_session(db, external_id)
     for msg in msgs:
         db.add(_msg_to_row(session.id, msg))
+    await _touch_session(session)
     await db.flush()
 
 

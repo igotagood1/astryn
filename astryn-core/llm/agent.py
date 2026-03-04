@@ -9,7 +9,7 @@ import db.repository as repo
 from llm.base import LLMProvider
 from store.domain import SessionState
 from tools.executor import build_preview, execute_tool, requires_confirmation
-from tools.registry import TOOLS
+from tools.registry import NO_PROJECT_TOOLS, TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +77,16 @@ async def run_agent(
     Calls the LLM repeatedly, executing safe tool calls immediately and
     pausing on any tool that requires user confirmation.
     """
-    effective_tools = tools if tools is not None else TOOLS
-
     for iteration in range(MAX_ITERATIONS):
+        # Re-derive available tools each iteration so that set_project
+        # mid-turn unlocks file/code tools without needing a second request.
+        if tools is not None:
+            effective_tools = tools
+        elif session_state.active_project:
+            effective_tools = TOOLS
+        else:
+            effective_tools = NO_PROJECT_TOOLS
+
         logger.debug("Agent iteration %d: session=%s", iteration + 1, session_id)
         response = await provider.chat(messages, system, tools=effective_tools)
         messages = [*messages, response.to_message()]

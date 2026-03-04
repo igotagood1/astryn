@@ -1,4 +1,6 @@
+import fnmatch
 import logging
+import re
 import shlex
 import subprocess
 
@@ -8,6 +10,7 @@ from store.domain import SessionState
 from tools.models import (
     AnyTool,
     ApplyDiff,
+    GrepFiles,
     ListFiles,
     ListProjects,
     ReadFile,
@@ -172,6 +175,50 @@ async def search_files(pattern: str, path: str = ".", active_project: str | None
     return "\n".join(lines)
 
 
+async def grep_files(pattern: str, include: str = "", active_project: str | None = None) -> str:
+    if not active_project:
+        return "No project is active. Use set_project first."
+
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"Invalid regex pattern: {e}"
+
+    project_root = validate_path(".", active_project)
+    if not project_root.exists():
+        return f"Project '{active_project}' does not exist."
+
+    max_results = 100
+    results: list[str] = []
+
+    for file_path in sorted(project_root.rglob("*")):
+        if not file_path.is_file():
+            continue
+        if any(part in NOISE_DIRS for part in file_path.parts):
+            continue
+        if include and not fnmatch.fnmatch(file_path.name, include):
+            continue
+
+        try:
+            text = file_path.read_text(encoding="utf-8", errors="strict")
+        except (UnicodeDecodeError, OSError):
+            continue  # skip binary / unreadable files
+
+        rel = str(file_path.relative_to(project_root))
+        for line_num, line in enumerate(text.splitlines(), start=1):
+            if regex.search(line):
+                results.append(f"{rel}:{line_num}: {line}")
+                if len(results) >= max_results:
+                    results.append(
+                        f"\n[truncated — showing first {max_results} matches, more results exist]"
+                    )
+                    return "\n".join(results)
+
+    if not results:
+        return f"No matches found for pattern '{pattern}'."
+    return "\n".join(results)
+
+
 async def execute_tool(
     tool_name: str,
     tool_args: dict,
@@ -207,6 +254,8 @@ async def execute_tool(
                 return await run_command(command, active_project)
             case SearchFiles(pattern=pattern, path=path):
                 return await search_files(pattern, path, active_project)
+            case GrepFiles(pattern=pattern, include=include):
+                return await grep_files(pattern, include, active_project)
             case _:
                 return f"Unhandled tool type: {type(tool).__name__}"
     except SecurityError as e:

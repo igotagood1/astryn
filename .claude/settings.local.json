@@ -5,7 +5,8 @@
       "Bash(brew install:*)",
       "Bash(source:*)",
       "Bash(git:*)",
-      "Bash(.venv/bin/python:*)"
+      "Bash(.venv/bin/python:*)",
+      "WebSearch"
     ]
   },
   "hooks": {

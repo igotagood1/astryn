@@ -11,7 +11,6 @@ from db.engine import get_db
 from llm.agent import run_agent
 from llm.router import get_provider
 from store.domain import pending_confirmations
-from tools.registry import TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +46,6 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
             system=session_service.build_system_prompt(state),
             session_id=req.session_id,
             session_state=state,
-            tools=TOOLS if state.active_project else [],
             db=db,
         )
 
