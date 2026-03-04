@@ -12,7 +12,7 @@ from telegram.ext import (
 # before any other module tries to read them.
 import config
 from handlers.callbacks import handle_confirmation, handle_model_select, handle_project_select
-from handlers.commands import cmd_clear, cmd_help, cmd_model, cmd_status
+from handlers.commands import cmd_clear, cmd_help, cmd_model, cmd_projects, cmd_status
 from handlers.message import handle_message
 
 
@@ -51,6 +51,7 @@ def main():
     app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("model", cmd_model))
+    app.add_handler(CommandHandler("projects", cmd_projects))
     app.add_handler(CallbackQueryHandler(handle_confirmation, pattern=r"^confirm:"))
     app.add_handler(CallbackQueryHandler(handle_model_select, pattern=r"^model_select:"))
     app.add_handler(CallbackQueryHandler(handle_project_select, pattern=r"^project:"))

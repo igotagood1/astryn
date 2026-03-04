@@ -1,4 +1,5 @@
 import logging
+from difflib import get_close_matches
 from typing import TypedDict  # used for _ChatResult
 
 import telegram.error
@@ -7,8 +8,36 @@ from telegram.ext import ContextTypes
 
 import config
 from core_client import send_message
+from handlers.commands import cmd_clear, cmd_help, cmd_model, cmd_projects, cmd_status
 
 logger = logging.getLogger(__name__)
+
+# Map of recognised command names to their handlers.
+# Fuzzy matching checks plain-text messages against these keys.
+_COMMAND_MAP = {
+    "help": cmd_help,
+    "clear": cmd_clear,
+    "status": cmd_status,
+    "model": cmd_model,
+    "models": cmd_model,
+    "projects": cmd_projects,
+    "project": cmd_projects,
+}
+
+
+def _fuzzy_command(text: str):
+    """Return a command handler if the message looks like a command name, else None.
+
+    Only matches single-word messages so natural sentences never get intercepted.
+    Uses difflib with a similarity cutoff so minor typos (modls → model) still match.
+    """
+    word = text.strip().lower().lstrip("/")
+    if not word or " " in word:
+        return None
+    if word in _COMMAND_MAP:
+        return _COMMAND_MAP[word]
+    matches = get_close_matches(word, _COMMAND_MAP.keys(), n=1, cutoff=0.75)
+    return _COMMAND_MAP[matches[0]] if matches else None
 
 
 class _ChatResult(TypedDict, total=False):
@@ -29,6 +58,13 @@ class _ChatResult(TypedDict, total=False):
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != config.ALLOWED_USER_ID:
         await update.message.reply_text("Not authorised.")
+        return
+
+    # Intercept single-word messages that look like command names so the user
+    # doesn't have to type a slash or spell things perfectly.
+    command_handler = _fuzzy_command(update.message.text)
+    if command_handler:
+        await command_handler(update, ctx)
         return
 
     session_id = str(update.effective_user.id)

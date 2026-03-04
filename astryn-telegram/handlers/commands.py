@@ -1,17 +1,39 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+import logging
+
+logger = logging.getLogger(__name__)
 from telegram.ext import ContextTypes
 
-from core_client import clear_session, health_check, list_models, set_model
+from core_client import clear_session, get_projects, health_check, list_models, set_model
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "*Astryn Commands*\n\n"
         "Just type anything — no /ask needed\n"
+        "/projects — Pick a project to work on\n"
         "/clear — Reset conversation history\n"
         "/status — Check if Ollama is running\n"
         "/model — Show and switch models",
         parse_mode="Markdown",
+    )
+
+
+async def cmd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    try:
+        projects = await get_projects()
+    except Exception as e:
+        await update.message.reply_text(f"❌ Could not fetch projects: {e}")
+        return
+
+    if not projects:
+        await update.message.reply_text("No projects found in ~/repos.")
+        return
+
+    rows = [[InlineKeyboardButton(p, callback_data=f"project:{p}")] for p in projects]
+    await update.message.reply_text(
+        "Choose a project:",
+        reply_markup=InlineKeyboardMarkup(rows),
     )
 
 

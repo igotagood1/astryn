@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import verify_api_key
-from api.schemas import ChatResponse, ConfirmationAction, ConfirmRequest, ProjectSelectAction
+from api.schemas import ChatResponse, ConfirmationAction, ConfirmRequest
 from store.memory import pending_confirmations, sessions
 from llm.agent import resume_agent
 from llm.router import get_provider
@@ -51,7 +51,4 @@ async def confirm_tool(confirmation_id: str, req: ConfirmRequest):
             action=ConfirmationAction(id=result.pending.id, preview=result.pending.preview),
         )
 
-    action = (
-        ProjectSelectAction(projects=result.projects) if result.projects else None
-    )
-    return ChatResponse(reply=result.reply, model=result.model, action=action)
+    return ChatResponse(reply=result.reply, model=result.model)

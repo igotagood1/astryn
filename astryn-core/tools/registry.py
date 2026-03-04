@@ -46,19 +46,6 @@ def _run_command_needs_confirmation(tool_args: dict) -> bool:
 
 
 REGISTRY: dict[str, ToolDef] = {
-    "list_projects": ToolDef(
-        schema={
-            "type": "function",
-            "function": {
-                "name": "list_projects",
-                "description": (
-                    "List all projects (top-level directories) in ~/repos. "
-                    "Only call this when the user explicitly asks to see their projects or choose one."
-                ),
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        },
-    ),
     "set_project": ToolDef(
         schema={
             "type": "function",
