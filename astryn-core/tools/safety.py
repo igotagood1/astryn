@@ -6,15 +6,15 @@ REPOS_ROOT = Path.home() / "repos"
 
 # Commands that execute immediately (no confirmation needed)
 IMMEDIATE_COMMANDS: dict[str, list[str] | None] = {
-    "git":    ["status", "diff", "log", "branch", "show", "stash list"],
-    "pytest": None,   # any pytest args are fine
+    "git": ["status", "diff", "log", "branch", "show", "stash list"],
+    "pytest": None,  # any pytest args are fine
     "python": ["-m pytest"],
-    "uv":     ["run pytest", "pip list"],
-    "pip":    ["list"],
-    "npm":    ["test", "list"],
-    "cargo":  ["test"],
-    "go":     ["test"],
-    "ls":     None,
+    "uv": ["run pytest", "pip list"],
+    "pip": ["list"],
+    "npm": ["test", "list"],
+    "cargo": ["test"],
+    "go": ["test"],
+    "ls": None,
 }
 
 # Commands that require confirmation before running
@@ -25,19 +25,39 @@ CONFIRMATION_COMMANDS: dict[str, list[str] | None] = {
 
 # Patterns that are always blocked regardless of command
 BLOCKED_PATTERNS = [
-    r"[|;&`]",          # pipes, semicolons, command chaining, backticks
-    r"\$\(",            # subshell
-    r"\.\.(?:/|$)",     # path traversal
-    r">\s*\S",          # output redirect
-    r"<\s*\S",          # input redirect
+    r"[|;&`]",  # pipes, semicolons, command chaining, backticks
+    r"\$\(",  # subshell
+    r"\.\.(?:/|$)",  # path traversal
+    r">\s*\S",  # output redirect
+    r"<\s*\S",  # input redirect
 ]
 
 BLOCKED_COMMANDS = {
-    "rm", "rmdir", "mv", "cp", "chmod", "chown",
-    "curl", "wget", "ssh", "scp", "sftp",
-    "sudo", "su", "bash", "sh", "zsh", "fish",
-    "env", "printenv", "export", "source",
-    "eval", "exec", "kill", "pkill",
+    "rm",
+    "rmdir",
+    "mv",
+    "cp",
+    "chmod",
+    "chown",
+    "curl",
+    "wget",
+    "ssh",
+    "scp",
+    "sftp",
+    "sudo",
+    "su",
+    "bash",
+    "sh",
+    "zsh",
+    "fish",
+    "env",
+    "printenv",
+    "export",
+    "source",
+    "eval",
+    "exec",
+    "kill",
+    "pkill",
 }
 
 
@@ -70,7 +90,7 @@ def validate_command(command: str) -> tuple[bool, str]:
     try:
         parts = shlex.split(command)
     except ValueError as e:
-        raise SecurityError(f"Could not parse command: {e}")
+        raise SecurityError(f"Could not parse command: {e}") from e
 
     if not parts:
         raise SecurityError("Empty command.")

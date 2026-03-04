@@ -7,7 +7,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
 import config
-from core_client import send_message
+from core_client import CoreError, send_message
 from handlers.commands import cmd_clear, cmd_help, cmd_model, cmd_projects, cmd_status
 
 logger = logging.getLogger(__name__)
@@ -73,9 +73,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         result: _ChatResult = await send_message(update.message.text, session_id)
         await _send_result(update.message, result)
+    except CoreError as e:
+        await update.message.reply_text(f"❌ {e}")
     except Exception as e:
         logger.error("Error handling message for session %s: %s", session_id, e)
-        await update.message.reply_text(f"❌ Error: {e}")
+        await update.message.reply_text("❌ Something went wrong. Please try again.")
 
 
 async def _send_result(message: Message, result: _ChatResult):
@@ -117,8 +119,7 @@ async def _send_result(message: Message, result: _ChatResult):
 
         case "project_select":
             rows = [
-                [InlineKeyboardButton(p, callback_data=f"project:{p}")]
-                for p in action["projects"]
+                [InlineKeyboardButton(p, callback_data=f"project:{p}")] for p in action["projects"]
             ]
             keyboard = InlineKeyboardMarkup(rows)
             await _send_chunked(message, reply or "Choose a project:", reply_markup=keyboard)

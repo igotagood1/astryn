@@ -1,9 +1,13 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from alembic.config import Config
 from fastapi import FastAPI
 from sqlalchemy import text
 
+from alembic import command
 from api.routes.chat import router as chat_router
 from api.routes.health import router as health_router
 from api.routes.models import router as models_router
@@ -18,6 +22,21 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+_CORE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _run_migrations() -> None:
+    """Run Alembic migrations to ensure the schema is up to date.
+
+    Sets script_location and prepend_sys_path explicitly so migrations
+    work regardless of the current working directory (local dev, Docker,
+    or any other launch context).
+    """
+    alembic_cfg = Config(str(_CORE_DIR / "alembic.ini"))
+    alembic_cfg.set_main_option("script_location", str(_CORE_DIR / "alembic"))
+    alembic_cfg.set_main_option("prepend_sys_path", str(_CORE_DIR))
+    command.upgrade(alembic_cfg, "head")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,6 +48,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Failed to connect to database: %s", e)
         raise
+
+    # Run migrations in a separate thread because env.py calls asyncio.run(),
+    # which cannot be invoked from within an already-running event loop.
+    logger.info("Running database migrations…")
+    await asyncio.to_thread(_run_migrations)
+    logger.info("Database migrations complete")
+
     yield
     # Shutdown: dispose engine
     await engine.dispose()

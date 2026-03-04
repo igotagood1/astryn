@@ -26,9 +26,7 @@ NOISE_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", "dist", "b
 
 
 async def list_projects() -> str:
-    projects = [
-        d.name for d in REPOS_ROOT.iterdir() if d.is_dir() and not d.name.startswith(".")
-    ]
+    projects = [d.name for d in REPOS_ROOT.iterdir() if d.is_dir() and not d.name.startswith(".")]
     if not projects:
         return "No projects found in ~/repos."
     return "Projects in ~/repos:\n" + "\n".join(f"- {p}" for p in sorted(projects))
@@ -44,7 +42,10 @@ async def set_project(name: str, session_state: SessionState) -> str:
 
 async def list_files(path: str = ".", active_project: str | None = None) -> str:
     if not active_project:
-        return "No project is active. Use list_projects to see available projects, then set_project to choose one."
+        return (
+            "No project is active. Use list_projects to see available projects, "
+            "then set_project to choose one."
+        )
     resolved = validate_path(path, active_project)
     if not resolved.exists():
         return f"Path '{path}' does not exist."
@@ -95,7 +96,8 @@ async def apply_diff(
     if count == 0:
         return (
             f"Could not apply diff — the target string was not found in '{path}'. "
-            f"The file may have changed. Try read_file first, then use write_file with the full updated content."
+            f"The file may have changed. Try read_file first, "
+            f"then use write_file with the full updated content."
         )
     if count > 1:
         return (
@@ -141,9 +143,7 @@ async def run_command(command: str, active_project: str | None = None) -> str:
         return f"Error running command: {e}"
 
 
-async def search_files(
-    pattern: str, path: str = ".", active_project: str | None = None
-) -> str:
+async def search_files(pattern: str, path: str = ".", active_project: str | None = None) -> str:
     if not active_project:
         return "No project is active. Use set_project first."
     resolved = validate_path(path, active_project)
@@ -154,9 +154,7 @@ async def search_files(
 
     try:
         matches = sorted(
-            m
-            for m in resolved.rglob(pattern)
-            if not any(part in NOISE_DIRS for part in m.parts)
+            m for m in resolved.rglob(pattern) if not any(part in NOISE_DIRS for part in m.parts)
         )
     except ValueError as e:
         return f"Invalid pattern '{pattern}': {e}"

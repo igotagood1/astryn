@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from pydantic import BaseModel
 
@@ -103,12 +103,10 @@ REGISTRY: dict[str, ToolDef] = {
     "write_file": ToolDef(
         schema=_schema_from_model("write_file", WriteFile),
         requires_confirmation=True,
-        build_preview=lambda args: (
-            "Write to `{}`:\n\n```\n{}\n```".format(
-                args.get("path", "?"),
-                args.get("content", "")[:1500]
-                + ("\n...[truncated]" if len(args.get("content", "")) > 1500 else ""),
-            )
+        build_preview=lambda args: "Write to `{}`:\n\n```\n{}\n```".format(
+            args.get("path", "?"),
+            args.get("content", "")[:1500]
+            + ("\n...[truncated]" if len(args.get("content", "")) > 1500 else ""),
         ),
     ),
     "run_command": ToolDef(

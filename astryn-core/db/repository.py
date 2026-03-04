@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
@@ -35,9 +35,7 @@ async def _resolve_session(db: AsyncSession, external_id: str) -> SessionModel:
     Within a single AsyncSession, SQLAlchemy's identity map caches the result,
     so multiple calls with the same external_id hit the DB only once.
     """
-    result = await db.execute(
-        select(SessionModel).where(SessionModel.external_id == external_id)
-    )
+    result = await db.execute(select(SessionModel).where(SessionModel.external_id == external_id))
     session = result.scalar_one_or_none()
 
     if session is None:
@@ -140,9 +138,7 @@ async def add_messages(db: AsyncSession, external_id: str, msgs: list[dict]) -> 
     await db.flush()
 
 
-async def get_messages(
-    db: AsyncSession, external_id: str, limit: int | None = None
-) -> list[dict]:
+async def get_messages(db: AsyncSession, external_id: str, limit: int | None = None) -> list[dict]:
     """Fetch message history for a session, ordered by creation time.
 
     When limit is set, returns the most recent N messages using a single
@@ -175,9 +171,7 @@ async def get_messages(
 async def delete_messages(db: AsyncSession, external_id: str) -> int:
     """Delete all messages for a session. Returns count deleted."""
     session = await _resolve_session(db, external_id)
-    result = await db.execute(
-        delete(MessageModel).where(MessageModel.session_id == session.id)
-    )
+    result = await db.execute(delete(MessageModel).where(MessageModel.session_id == session.id))
     await db.flush()
     return result.rowcount
 
@@ -216,9 +210,7 @@ async def log_tool_call(
 async def clear_session(db: AsyncSession, external_id: str) -> None:
     """Delete messages and reset state for a session. Keeps the session row."""
     session = await _resolve_session(db, external_id)
-    await db.execute(
-        delete(MessageModel).where(MessageModel.session_id == session.id)
-    )
+    await db.execute(delete(MessageModel).where(MessageModel.session_id == session.id))
 
     result = await db.execute(
         select(SessionStateModel).where(SessionStateModel.session_id == session.id)

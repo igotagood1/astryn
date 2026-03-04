@@ -17,9 +17,7 @@ router = APIRouter()
 @router.get("/projects", dependencies=[Depends(verify_api_key)])
 async def list_projects() -> list[str]:
     """Return all top-level project directories in ~/repos."""
-    projects = [
-        d.name for d in REPOS_ROOT.iterdir() if d.is_dir() and not d.name.startswith(".")
-    ]
+    projects = [d.name for d in REPOS_ROOT.iterdir() if d.is_dir() and not d.name.startswith(".")]
     return sorted(projects)
 
 
@@ -32,7 +30,7 @@ async def set_project(
     try:
         path = validate_path(req.name)
     except SecurityError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     if not path.is_dir():
         raise HTTPException(status_code=404, detail=f"'{req.name}' is not a project in ~/repos.")

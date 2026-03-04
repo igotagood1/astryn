@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import db.repository as repo
-from store.domain import SessionState
 from llm.base import LLMProvider
+from store.domain import SessionState
 from tools.executor import build_preview, execute_tool, requires_confirmation
 from tools.registry import TOOLS
 
@@ -28,8 +28,10 @@ def _looks_like_failed_tool_call(content: str) -> bool:
         return False
     try:
         data = json.loads(content)
-        return isinstance(data, dict) and "name" in data and (
-            "arguments" in data or "parameters" in data
+        return (
+            isinstance(data, dict)
+            and "name" in data
+            and ("arguments" in data or "parameters" in data)
         )
     except json.JSONDecodeError:
         return False
@@ -124,7 +126,9 @@ async def resume_agent(
     """Resume the agent after the user approves or rejects a pending tool call."""
     if approved:
         logger.info("Executing approved tool: %s", pending.tool_name)
-        tool_result = await execute_tool(pending.tool_name, pending.tool_args, pending.session_state)
+        tool_result = await execute_tool(
+            pending.tool_name, pending.tool_args, pending.session_state
+        )
     else:
         logger.info("Tool rejected by user: %s", pending.tool_name)
         tool_result = "User rejected this action. Do not retry it."

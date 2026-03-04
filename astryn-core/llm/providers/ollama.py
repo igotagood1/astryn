@@ -6,7 +6,6 @@ from llm.base import LLMProvider, LLMResponse
 
 
 class OllamaProvider(LLMProvider):
-
     def __init__(self, base_url: str, model: str):
         self.base_url = base_url
         self._model = model

@@ -1,7 +1,7 @@
 # Default model to pull if not already downloaded
 MODEL ?= qwen2.5-coder:7b
 
-.PHONY: start start-detached dev stop logs build restart-telegram _ensure-ollama _ensure-model
+.PHONY: start start-detached dev stop logs build restart-telegram lint format check test test-all test-integration _ensure-ollama _ensure-model
 
 ## start: Ensure Ollama is running, pull model if needed, start services (foreground)
 start: _ensure-model
@@ -30,6 +30,31 @@ logs:
 ## build: Rebuild service images from scratch (use after dependency changes)
 build:
 	docker compose build --no-cache
+
+## lint: Run ruff linter on both services
+lint:
+	cd astryn-core && .venv/bin/ruff check ../astryn-core/ ../astryn-telegram/
+
+## format: Auto-format both services with ruff
+format:
+	cd astryn-core && .venv/bin/ruff format ../astryn-core/ ../astryn-telegram/
+
+## check: Lint + format check + tests (what the pre-commit hook runs)
+check: lint
+	cd astryn-core && .venv/bin/ruff format --check ../astryn-core/ ../astryn-telegram/
+	cd astryn-core && .venv/bin/python -m pytest -m "not integration" -q -W error
+
+## test: Run unit + API tests (no Docker/infra required)
+test:
+	cd astryn-core && .venv/bin/python -m pytest -m "not integration" -q
+
+## test-all: Run all tests including integration (Docker must be running)
+test-all:
+	cd astryn-core && .venv/bin/python -m pytest -q
+
+## test-integration: Run only integration tests (Docker must be running)
+test-integration:
+	cd astryn-core && .venv/bin/python -m pytest -m integration -q
 
 # ── Internal targets ──────────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ Revises:
 Create Date: 2026-03-04
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -13,9 +13,9 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "0001"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -44,9 +44,7 @@ def upgrade() -> None:
         sa.Column("tool_call_id", sa.String(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index(
-        "ix_messages_session_created", "messages", ["session_id", "created_at"]
-    )
+    op.create_index("ix_messages_session_created", "messages", ["session_id", "created_at"])
 
     # Session state
     op.create_table(
@@ -80,10 +78,7 @@ def upgrade() -> None:
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
-    op.create_index(
-        "ix_tool_audit_session_created", "tool_audit", ["session_id", "created_at"]
-    )
-
+    op.create_index("ix_tool_audit_session_created", "tool_audit", ["session_id", "created_at"])
 
 
 def downgrade() -> None:
