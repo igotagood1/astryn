@@ -17,6 +17,8 @@ from handlers.message import handle_message
 load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is not set")
 
 
 class _RedactSecretsFilter(logging.Filter):
