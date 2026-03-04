@@ -1,0 +1,19 @@
+{
+  "recommendations": [
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-python.debugpy",
+    "ms-python.black-formatter",
+    "charliermarsh.ruff",
+    "tamasfe.even-better-toml",
+    "mikestead.dotenv",
+    "njpwerner.autodocstring",
+    "humao.rest-client",
+    "eamodio.gitlens",
+    "usernamehw.errorlens",
+    "oderwat.indent-rainbow",
+    "ms-azuretools.vscode-docker",
+    "ms-vscode.makefile-tools",
+    "anthropic.claude-code"
+  ]
+}

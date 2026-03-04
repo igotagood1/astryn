@@ -22,7 +22,8 @@ env/
 !.env.example
 
 # IDEs
-.vscode/
+.vscode/*
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo

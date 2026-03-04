@@ -1,122 +1,42 @@
 # Astryn
 
-> A local-first personal AI assistant. Send a message from Telegram, get a reply from a local LLM running on your Mac — with tool use, file editing, and shell access.
+A personal AI assistant you control from Telegram, running entirely on your own machine. Send a message from your phone, get a response from a local LLM — with the ability to read files, make edits, and run shell commands in your repos.
 
-**Current state: Phase 2** — Agentic tool use. Astryn can read and write files, run whitelisted shell commands, and switch between locally installed Ollama models. Write operations pause and ask for your approval via Telegram inline buttons before executing.
-
----
-
-## What It Does
-
-- Send a message from Telegram on your phone
-- Bot polls Telegram for new messages every second
-- Forwards your message to a local FastAPI server
-- FastAPI runs an agentic loop — the LLM can call tools, read files, run commands
-- Write/exec operations (file writes, `git commit`, etc.) pause and send you an **Approve / Reject** inline keyboard
-- Read-only operations (file reads, `git status`, `pytest`) run immediately without asking
-- Response comes back to your phone
-- Multi-turn conversation — session history is kept in memory until you `/clear`
+Built as a hands-on way to explore Python and the AI/LLM ecosystem — FastAPI, async patterns, tool use, provider abstractions, and how agentic loops actually work.
 
 ---
 
-## Architecture
+## How it works
 
-```
-Your Phone (Telegram)
-        │
-        ▼
-Telegram Servers  (free, Telegram's infrastructure)
-        │  long-polling
-        ▼
-astryn-telegram  (port: none, polls outbound)
-        │  POST /chat  /  POST /confirm/{id}
-        ▼
-astryn-core  (port 8000, FastAPI)
-        │  HTTP
-        ▼
-Ollama  (port 11434, runs locally)
-        │
-        ▼
-qwen2.5-coder:7b  (or whichever model is active)
-```
+- **astryn-core** — FastAPI backend that manages conversation sessions and runs the LLM
+- **astryn-telegram** — Telegram bot that forwards your messages to core and sends back replies
 
----
+Write operations (file edits, git commits) pause and ask for your approval via an inline Telegram keyboard. Read-only operations (file reads, git status, tests) execute immediately.
 
-## Repo Structure
-
-```
-astryn/
-├── astryn-core/                 # FastAPI backend
-│   ├── api/
-│   │   ├── main.py              # App entry point
-│   │   ├── state.py             # In-memory sessions + pending confirmations
-│   │   └── routes/
-│   │       ├── chat.py          # POST /chat, DELETE /chat/{id}
-│   │       ├── tools.py         # POST /confirm/{id}
-│   │       ├── models.py        # GET /models, POST /models/active
-│   │       └── health.py        # GET /health
-│   ├── llm/
-│   │   ├── agent.py             # Agentic loop, pause/resume on confirmation
-│   │   ├── base.py              # Abstract LLMProvider + LLMResponse
-│   │   ├── config.py            # Settings from .env
-│   │   ├── router.py            # Provider selection + active model state
-│   │   └── providers/
-│   │       └── ollama.py        # Ollama implementation (with tool call support)
-│   ├── tools/
-│   │   ├── definitions.py       # Tool JSON schemas passed to the LLM
-│   │   ├── executor.py          # Tool dispatch, confirmation check, preview text
-│   │   └── safety.py            # Path validation (~/repos only), command whitelist
-│   ├── prompts/
-│   │   └── system.md            # System prompt
-│   ├── .env.example
-│   └── requirements.txt
-│
-├── astryn-telegram/             # Telegram bot
-│   ├── bot.py                   # Entry point, polling loop
-│   ├── core_client.py           # HTTP client for astryn-core
-│   ├── handlers/
-│   │   ├── message.py           # Handles text messages + renders confirmation keyboard
-│   │   ├── callbacks.py         # Handles Approve/Reject button taps
-│   │   └── commands.py          # /help /clear /status /model
-│   ├── .env.example
-│   └── requirements.txt
-│
-├── tmp/docs/                    # Planning docs (gitignored)
-├── .gitignore
-└── README.md
-```
+The two app services run in Docker. [Ollama](https://ollama.com) runs natively on your machine so it has full access to your GPU.
 
 ---
 
 ## Prerequisites
 
-- macOS (M-series Mac recommended)
-- [Homebrew](https://brew.sh)
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) (Python package manager)
-- [Ollama](https://ollama.com) with at least one model pulled
-- A Telegram account and bot token from [@BotFather](https://t.me/botfather)
+- [Docker](https://docs.docker.com/get-docker/) with Compose
+- [Ollama](https://ollama.com) installed and running (`ollama serve`)
+- `make` (pre-installed on macOS and Linux; Windows users see note below)
+- A Telegram account
 
 ---
 
 ## Setup
 
-### 1. Install dependencies
+### 1. Create a Telegram bot
 
-```bash
-# Homebrew
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+1. Message [@BotFather](https://t.me/botfather) on Telegram
+2. Send `/newbot` and follow the prompts — copy the **bot token** it gives you
 
-# Python + uv
-brew install python
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source ~/.zshrc
+Find your **Telegram user ID**:
 
-# Ollama
-brew install ollama
-ollama serve
-ollama pull qwen2.5-coder:7b
-```
+1. Message [@userinfobot](https://t.me/userinfobot)
+2. It replies with your numeric ID
 
 ### 2. Clone the repo
 
@@ -125,129 +45,110 @@ git clone git@github.com:yourusername/astryn.git
 cd astryn
 ```
 
-### 3. Set up astryn-core
+### 3. Configure astryn-core
 
 ```bash
-cd astryn-core
-uv venv && source .venv/bin/activate
-uv pip install -r requirements.txt
-cp .env.example .env
-# Edit .env — set ASTRYN_API_KEY to any secret string
-deactivate && cd ..
+cp astryn-core/.env.example astryn-core/.env
 ```
 
-### 4. Set up astryn-telegram
+Edit `astryn-core/.env` — set `ASTRYN_API_KEY` to any secret string:
+
+```env
+ASTRYN_API_KEY=pick-any-secret-string
+```
+
+### 4. Configure astryn-telegram
 
 ```bash
-cd astryn-telegram
-uv venv && source .venv/bin/activate
-uv pip install -r requirements.txt
-cp .env.example .env
-# Edit .env — add your bot token, user ID, and the same API key
-deactivate && cd ..
+cp astryn-telegram/.env.example astryn-telegram/.env
 ```
 
-### 5. Get your Telegram credentials
+Edit `astryn-telegram/.env`:
 
-- **Bot token**: Message [@BotFather](https://t.me/botfather) → `/newbot` → copy the token
-- **Your user ID**: Message [@userinfobot](https://t.me/userinfobot) → it replies with your numeric ID
+```env
+TELEGRAM_BOT_TOKEN=your-bot-token-from-botfather
+ALLOWED_USER_ID=your-numeric-telegram-user-id
+ASTRYN_CORE_API_KEY=same-secret-string-as-above
+```
 
 ---
 
-## Running
+## Starting the app
 
-Three terminals, all from `astryn/`:
-
-```bash
-# Terminal 1 — Ollama (skip if already running in menu bar)
-ollama serve
-
-# Terminal 2 — astryn-core
-cd astryn-core && source .venv/bin/activate
-uvicorn api.main:app --reload --port 8000
-
-# Terminal 3 — astryn-telegram
-cd astryn-telegram && source .venv/bin/activate
-python bot.py
-```
-
-### Verify it's working
+Make sure Ollama is running first, then:
 
 ```bash
-curl http://localhost:8000/health
-# {"status":"ok","ollama":"up","model":"ollama/qwen2.5-coder:7b"}
+make start
 ```
 
-Then open Telegram, find your bot, and send `/status`.
+This will:
+1. Check that Ollama is reachable
+2. Pull the default model (`qwen2.5-coder:7b`) if it isn't already downloaded
+3. Start both services via Docker Compose
+
+To run in the background instead:
+
+```bash
+make start-detached
+```
+
+Other useful commands:
+
+```bash
+make stop     # stop all services
+make logs     # follow logs from all services
+make build    # rebuild images after dependency changes
+```
+
+**Windows users:** `make` isn't available by default. Either use [WSL](https://learn.microsoft.com/en-us/windows/wsl/) or run the steps manually:
+
+```bash
+ollama pull qwen2.5-coder:7b
+docker compose up
+```
 
 ---
 
-## Telegram Commands
+## Notes
+
+**Your repos:** Astryn can read and edit files under `~/repos` on your machine. That directory is mounted into the container automatically. If your projects live somewhere else, update the volume in `docker-compose.yml`:
+
+```yaml
+volumes:
+  - /your/path/to/projects:/root/repos
+```
+
+**Switching models:** Any Ollama model that supports tool use works. Pull one with `ollama pull <model>` and switch via `/model` in Telegram. `llama3.1:8b` is a solid general-purpose option.
+
+---
+
+## Commands
 
 | Command | What it does |
 |---------|-------------|
 | `/help` | Show available commands |
-| `/status` | Check Ollama status + active model |
-| `/model` | Show the current model |
-| `/model list` | List all locally installed models |
-| `/model use <name>` | Switch to a different model |
+| `/status` | Check Ollama status and active model |
+| `/model` | Show current model and switch to another |
 | `/clear` | Reset conversation history |
-
----
-
-## Environment Variables
-
-### astryn-core/.env
-
-```env
-OLLAMA_BASE_URL=http://localhost:11434
-ASTRYN_DEFAULT_MODEL=qwen2.5-coder:7b
-ASTRYN_API_KEY=your-secret-key-here
-MAX_HISTORY_TURNS=20
-```
-
-### astryn-telegram/.env
-
-```env
-TELEGRAM_BOT_TOKEN=your-bot-token-here
-ALLOWED_USER_ID=your-telegram-user-id
-ASTRYN_CORE_URL=http://localhost:8000
-ASTRYN_CORE_API_KEY=your-secret-key-here
-```
-
-> `ASTRYN_API_KEY` in astryn-core and `ASTRYN_CORE_API_KEY` in astryn-telegram must match.
-
----
-
-## Phase Roadmap
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| **1** | ✅ Done | Telegram bot + local Ollama, polling mode, multi-turn conversation |
-| **2** | ✅ Done | Agentic tool use — file r/w, shell commands, project scoping, model switching, inline confirmation |
-| **3** | Planned | SQLite persistence, launchd services, Anthropic fallback |
-| **4** | Planned | Cloudflare Tunnel, webhooks, GitHub integration |
-| **5+** | Future | MCP servers, persistent memory, Android app |
 
 ---
 
 ## Troubleshooting
 
 **Bot doesn't respond**
-- Check Terminal 3 for errors
-- Verify `ALLOWED_USER_ID` is your numeric Telegram ID (not a username)
+- Make sure `ALLOWED_USER_ID` is your numeric ID, not a username
 - Confirm `ASTRYN_CORE_API_KEY` matches `ASTRYN_API_KEY`
 
 **`503 Ollama is not available`**
-- Run `ollama serve` or check the Ollama menu bar icon
-- Test: `curl http://localhost:11434/api/tags`
-
-**`404 Confirmation not found or already resolved`**
-- The confirmation expired (session was cleared) or the button was clicked twice
+- Ollama must be running on the host before starting the containers
+- Check it's up: `curl http://localhost:11434/api/tags`
+- If not running: `ollama serve`
 
 **`ModuleNotFoundError`**
-- Activate the venv first: `source .venv/bin/activate`
-- Make sure you're in the right directory
+- Rebuild the images: `make build`
 
-**Port 8000 already in use**
-- `lsof -i :8000` to find the PID, then `kill <PID>`
+---
+
+## License
+
+MIT — see [LICENSE](./LICENSE)
