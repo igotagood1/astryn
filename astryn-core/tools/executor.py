@@ -2,7 +2,21 @@ import logging
 import shlex
 import subprocess
 
+from pydantic import ValidationError
+
 from store.memory import SessionState
+from tools.models import (
+    AnyTool,
+    ApplyDiff,
+    ListFiles,
+    ListProjects,
+    ReadFile,
+    RunCommand,
+    SearchFiles,
+    SetProject,
+    WriteFile,
+    parse_tool,
+)
 from tools.registry import REGISTRY
 from tools.safety import REPOS_ROOT, SecurityError, validate_command, validate_path
 
@@ -127,6 +141,39 @@ async def run_command(command: str, active_project: str | None = None) -> str:
         return f"Error running command: {e}"
 
 
+async def search_files(
+    pattern: str, path: str = ".", active_project: str | None = None
+) -> str:
+    if not active_project:
+        return "No project is active. Use set_project first."
+    resolved = validate_path(path, active_project)
+    if not resolved.exists():
+        return f"Path '{path}' does not exist."
+
+    project_root = validate_path(".", active_project)
+
+    try:
+        matches = sorted(
+            m
+            for m in resolved.rglob(pattern)
+            if not any(part in NOISE_DIRS for part in m.parts)
+        )
+    except ValueError as e:
+        return f"Invalid pattern '{pattern}': {e}"
+
+    if not matches:
+        return f"No files matching '{pattern}' found."
+
+    lines = []
+    for match in matches:
+        try:
+            lines.append(str(match.relative_to(project_root)))
+        except ValueError:
+            lines.append(str(match))
+
+    return "\n".join(lines)
+
+
 async def execute_tool(
     tool_name: str,
     tool_args: dict,
@@ -136,29 +183,34 @@ async def execute_tool(
     active_project = session_state.active_project
 
     try:
-        match tool_name:
-            case "list_projects":
+        tool: AnyTool = parse_tool(tool_name, tool_args)
+    except ValueError:
+        logger.warning("Unknown tool called: %s", tool_name)
+        return f"Unknown tool: {tool_name}"
+    except ValidationError as e:
+        logger.warning("Invalid args for tool %s: %s", tool_name, e)
+        return f"Invalid arguments for {tool_name}: {e}"
+
+    try:
+        match tool:
+            case ListProjects():
                 return await list_projects()
-            case "set_project":
-                return await set_project(tool_args["name"], session_state)
-            case "list_files":
-                return await list_files(tool_args.get("path", "."), active_project)
-            case "read_file":
-                return await read_file(tool_args["path"], active_project)
-            case "apply_diff":
-                return await apply_diff(
-                    tool_args["path"],
-                    tool_args["old_str"],
-                    tool_args["new_str"],
-                    active_project,
-                )
-            case "write_file":
-                return await write_file(tool_args["path"], tool_args["content"], active_project)
-            case "run_command":
-                return await run_command(tool_args["command"], active_project)
+            case SetProject(name=name):
+                return await set_project(name, session_state)
+            case ListFiles(path=path):
+                return await list_files(path, active_project)
+            case ReadFile(path=path):
+                return await read_file(path, active_project)
+            case ApplyDiff(path=path, old_str=old_str, new_str=new_str):
+                return await apply_diff(path, old_str, new_str, active_project)
+            case WriteFile(path=path, content=content):
+                return await write_file(path, content, active_project)
+            case RunCommand(command=command):
+                return await run_command(command, active_project)
+            case SearchFiles(pattern=pattern, path=path):
+                return await search_files(pattern, path, active_project)
             case _:
-                logger.warning("Unknown tool called: %s", tool_name)
-                return f"Unknown tool: {tool_name}"
+                return f"Unhandled tool type: {type(tool).__name__}"
     except SecurityError as e:
         logger.warning("Security error for tool %s: %s", tool_name, e)
         return f"Security error: {e} Use a relative path within the active project."
