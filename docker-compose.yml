@@ -1,0 +1,48 @@
+services:
+
+  # ── astryn-core ───────────────────────────────────────────────────────────
+  # FastAPI backend. Reads secrets from astryn-core/.env.
+  #
+  # Ollama runs natively on the host for full GPU access. The service reaches
+  # it via host.docker.internal, which Docker Desktop resolves automatically
+  # on macOS and Windows. The extra_hosts entry below makes this work on
+  # Linux with Docker Engine as well.
+  #
+  # The repos volume mounts your local ~/repos directory into the container
+  # so the agent can read and edit your projects. Adjust the left-hand path
+  # if your projects live somewhere else.
+  astryn-core:
+    build: ./astryn-core
+    ports:
+      - "8000:8000"
+    env_file: ./astryn-core/.env
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${HOME}/repos:/root/repos
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # ── astryn-telegram ───────────────────────────────────────────────────────
+  # Telegram bot. Reads secrets from astryn-telegram/.env.
+  # ASTRYN_CORE_URL points at the core service inside the Docker network.
+  astryn-telegram:
+    build: ./astryn-telegram
+    env_file: ./astryn-telegram/.env
+    environment:
+      - ASTRYN_CORE_URL=http://astryn-core:8000
+    depends_on:
+      astryn-core:
+        condition: service_healthy
+    restart: unless-stopped
