@@ -1,6 +1,19 @@
 from dataclasses import dataclass
 from typing import Callable
 
+from pydantic import BaseModel
+
+from tools.models import (
+    ApplyDiff,
+    ListFiles,
+    ListProjects,
+    ReadFile,
+    RunCommand,
+    SearchFiles,
+    SetProject,
+    WriteFile,
+)
+
 
 @dataclass
 class ToolDef:
@@ -28,6 +41,27 @@ class ToolDef:
     build_preview: Callable[[dict], str] | None = None
 
 
+def _schema_from_model(name: str, model: type[BaseModel]) -> dict:
+    """Build an OpenAI-compatible tool schema from a Pydantic model class.
+
+    The model's docstring becomes the tool description.
+    Field names, types, and descriptions come from model_json_schema().
+    """
+    json_schema = model.model_json_schema()
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": (model.__doc__ or "").strip(),
+            "parameters": {
+                "type": "object",
+                "properties": json_schema.get("properties", {}),
+                "required": json_schema.get("required", []),
+            },
+        },
+    }
+
+
 def _run_command_needs_confirmation(tool_args: dict) -> bool:
     """Check the command whitelist to decide if confirmation is required.
 
@@ -46,102 +80,20 @@ def _run_command_needs_confirmation(tool_args: dict) -> bool:
 
 
 REGISTRY: dict[str, ToolDef] = {
+    "list_projects": ToolDef(
+        schema=_schema_from_model("list_projects", ListProjects),
+    ),
     "set_project": ToolDef(
-        schema={
-            "type": "function",
-            "function": {
-                "name": "set_project",
-                "description": (
-                    "Set the active project for this session. "
-                    "All subsequent file operations are scoped to this project."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            "type": "string",
-                            "description": "Project folder name within ~/repos",
-                        }
-                    },
-                    "required": ["name"],
-                },
-            },
-        },
+        schema=_schema_from_model("set_project", SetProject),
     ),
     "list_files": ToolDef(
-        schema={
-            "type": "function",
-            "function": {
-                "name": "list_files",
-                "description": "List files and directories at a path within the active project.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Relative path from project root. Defaults to '.' (project root).",
-                            "default": ".",
-                        }
-                    },
-                    "required": [],
-                },
-            },
-        },
+        schema=_schema_from_model("list_files", ListFiles),
     ),
     "read_file": ToolDef(
-        schema={
-            "type": "function",
-            "function": {
-                "name": "read_file",
-                "description": "Read the full contents of a file in the active project.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Relative path from project root",
-                        }
-                    },
-                    "required": ["path"],
-                },
-            },
-        },
+        schema=_schema_from_model("read_file", ReadFile),
     ),
     "apply_diff": ToolDef(
-        schema={
-            "type": "function",
-            "function": {
-                "name": "apply_diff",
-                "description": (
-                    "Apply a targeted change to a file using search-and-replace. "
-                    "PREFER this over write_file for changes to existing files — "
-                    "it is surgical and easier to review. "
-                    "Show the user what you're changing before calling this. "
-                    "Requires confirmation."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Relative path from project root",
-                        },
-                        "old_str": {
-                            "type": "string",
-                            "description": (
-                                "The exact string to find and replace. "
-                                "Must be unique in the file."
-                            ),
-                        },
-                        "new_str": {
-                            "type": "string",
-                            "description": "The replacement string. Empty string to delete.",
-                        },
-                    },
-                    "required": ["path", "old_str", "new_str"],
-                },
-            },
-        },
+        schema=_schema_from_model("apply_diff", ApplyDiff),
         requires_confirmation=True,
         build_preview=lambda args: (
             f"Apply diff to `{args.get('path', '?')}`:\n\n"
@@ -149,32 +101,7 @@ REGISTRY: dict[str, ToolDef] = {
         ),
     ),
     "write_file": ToolDef(
-        schema={
-            "type": "function",
-            "function": {
-                "name": "write_file",
-                "description": (
-                    "Write full content to a file (creates or overwrites). "
-                    "Use for new files or when apply_diff would cover the entire file. "
-                    "ALWAYS explain what you're writing and why before calling this. "
-                    "Requires confirmation."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Relative path from project root",
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Full file content to write",
-                        },
-                    },
-                    "required": ["path", "content"],
-                },
-            },
-        },
+        schema=_schema_from_model("write_file", WriteFile),
         requires_confirmation=True,
         build_preview=lambda args: (
             "Write to `{}`:\n\n```\n{}\n```".format(
@@ -185,29 +112,12 @@ REGISTRY: dict[str, ToolDef] = {
         ),
     ),
     "run_command": ToolDef(
-        schema={
-            "type": "function",
-            "function": {
-                "name": "run_command",
-                "description": (
-                    "Run a whitelisted shell command in the active project directory. "
-                    "Read-only commands (git status, pytest, etc.) run immediately. "
-                    "Write commands (git commit, git add, npm run) require confirmation."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "command": {
-                            "type": "string",
-                            "description": "The command to run",
-                        }
-                    },
-                    "required": ["command"],
-                },
-            },
-        },
+        schema=_schema_from_model("run_command", RunCommand),
         requires_confirmation=_run_command_needs_confirmation,
         build_preview=lambda args: f"Run: `{args.get('command', '?')}`",
+    ),
+    "search_files": ToolDef(
+        schema=_schema_from_model("search_files", SearchFiles),
     ),
 }
 

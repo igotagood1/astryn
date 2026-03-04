@@ -26,6 +26,13 @@ python bot.py
 uv pip install -r requirements.txt
 ```
 
+**After adding a new package**, update the requirements file from within the service directory:
+```bash
+uv pip install <package>
+uv pip freeze > requirements.txt
+```
+Always do this before committing — if a package is imported but missing from `requirements.txt`, the service will fail to start in a clean environment.
+
 ## Phase Status
 
 | Phase | Focus | Status |
