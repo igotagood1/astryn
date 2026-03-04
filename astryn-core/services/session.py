@@ -60,9 +60,7 @@ async def clear(db: AsyncSession, session_id: str) -> None:
     """Delete messages, reset state, and clean up pending confirmations."""
     await repo.clear_session(db, session_id)
 
-    stale_ids = [
-        k for k, v in pending_confirmations.items() if v.session_id == session_id
-    ]
+    stale_ids = [k for k, v in pending_confirmations.items() if v.session_id == session_id]
     for k in stale_ids:
         del pending_confirmations[k]
 
@@ -82,7 +80,8 @@ def build_system_prompt(state: SessionState) -> str:
         return (
             SYSTEM_PROMPT + f"\n\n## Current Session State\n\n"
             f"Active project: {state.active_project}\n"
-            f"Do NOT call list_projects or set_project again unless the user explicitly asks to change projects."
+            f"Do NOT call list_projects or set_project again "
+            f"unless the user explicitly asks to change projects."
         )
     return (
         SYSTEM_PROMPT + "\n\n## Current Session State\n\n"

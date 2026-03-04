@@ -18,7 +18,6 @@ class LLMResponse:
 
 
 class LLMProvider(ABC):
-
     @abstractmethod
     async def chat(
         self,

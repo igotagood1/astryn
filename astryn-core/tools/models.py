@@ -6,7 +6,10 @@ class ListProjects(BaseModel):
 
 
 class SetProject(BaseModel):
-    """Set the active project for this session. All subsequent file operations are scoped to this project."""
+    """Set the active project for this session.
+
+    All subsequent file operations are scoped to this project.
+    """
 
     name: str = Field(description="Project folder name within ~/repos")
 
@@ -27,7 +30,12 @@ class ReadFile(BaseModel):
 
 
 class ApplyDiff(BaseModel):
-    """Apply a targeted change to a file using search-and-replace. PREFER this over write_file for changes to existing files — it is surgical and easier to review. Show the user what you're changing before calling this. Requires confirmation."""
+    """Apply a targeted change to a file using search-and-replace.
+
+    PREFER this over write_file for changes to existing files — it is surgical
+    and easier to review. Show the user what you're changing before calling this.
+    Requires confirmation.
+    """
 
     path: str = Field(description="Relative path from project root")
     old_str: str = Field(
@@ -37,14 +45,23 @@ class ApplyDiff(BaseModel):
 
 
 class WriteFile(BaseModel):
-    """Write full content to a file (creates or overwrites). Use for new files or when apply_diff would cover the entire file. ALWAYS explain what you're writing and why before calling this. Requires confirmation."""
+    """Write full content to a file (creates or overwrites).
+
+    Use for new files or when apply_diff would cover the entire file.
+    ALWAYS explain what you're writing and why before calling this.
+    Requires confirmation.
+    """
 
     path: str = Field(description="Relative path from project root")
     content: str = Field(description="Full file content to write")
 
 
 class RunCommand(BaseModel):
-    """Run a whitelisted shell command in the active project directory. Read-only commands (git status, pytest, etc.) run immediately. Write commands (git commit, git add, npm run) require confirmation."""
+    """Run a whitelisted shell command in the active project directory.
+
+    Read-only commands (git status, pytest, etc.) run immediately.
+    Write commands (git commit, git add, npm run) require confirmation.
+    """
 
     command: str = Field(description="The command to run")
 
@@ -55,7 +72,10 @@ class SearchFiles(BaseModel):
     pattern: str = Field(description="Glob pattern to match, e.g. '*.py' or 'src/**/*.ts'")
     path: str = Field(
         default=".",
-        description="Subdirectory to search within, relative to project root. Defaults to '.' (entire project).",
+        description=(
+            "Subdirectory to search within, relative to project root. "
+            "Defaults to '.' (entire project)."
+        ),
     )
 
 

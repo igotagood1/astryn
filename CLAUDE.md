@@ -23,15 +23,17 @@ python bot.py
 
 **Install dependencies** (from within each service directory):
 ```bash
-uv pip install -r requirements.txt
+uv pip install -r requirements.txt          # production only
+uv pip install -r requirements-dev.txt      # dev + test (includes prod)
 ```
 
-**After adding a new package**, update the requirements file from within the service directory:
+**After adding a new package**, update the appropriate requirements file from within the service directory:
 ```bash
 uv pip install <package>
-uv pip freeze > requirements.txt
+# Runtime dependency → add to requirements.txt
+# Dev/test dependency (pytest, ruff, etc.) → add to requirements-dev.txt
 ```
-Always do this before committing — if a package is imported but missing from `requirements.txt`, the service will fail to start in a clean environment.
+Always do this before committing — if a package is imported but missing from `requirements.txt`, the service will fail to start in a clean environment. The Dockerfile only installs `requirements.txt` (production deps).
 
 ## Phase Status
 
@@ -95,13 +97,38 @@ The project follows a test-driven workflow using specialized agents:
 3. **code-reviewer** + **design-reviewer** — Run AFTER implementation. Review for correctness and architectural fit.
 4. **security-reviewer** — Run AFTER implementation. Searches for live CVEs, audits dependencies, checks for injection vectors, and validates the tool execution sandbox. Focused on "will this break or be attacked in production?"
 
-**Running tests** (from `astryn-core/`):
+## Linting & Formatting
+
+Uses **ruff** for both linting and formatting. Config is in `pyproject.toml`. Zero warnings/errors policy — no suppressing warnings without fixing the root cause.
+
 ```bash
+make lint               # run ruff linter
+make format             # auto-format with ruff
+make check              # lint + format check + tests (what pre-commit runs)
+```
+
+## Testing
+
+**Always run tests before committing.** A Claude Code pre-commit hook runs lint, format check, and tests automatically.
+
+```bash
+# From repo root (via Makefile):
+make test               # unit + API tests (fast, no Docker needed)
+make test-all           # all tests including integration
+make test-integration   # integration tests only (Docker must be running)
+
+# From astryn-core/ directly:
 pytest                        # all tests
 pytest tests/api/             # API tests only
+pytest tests/unit/            # unit tests only
 pytest -m "not integration"   # skip tests needing real infra
 pytest -m integration         # only integration tests
 ```
+
+**Test categories:**
+- `tests/unit/` — pure logic tests (safety, schemas, executor, agent, router). No DB/HTTP needed.
+- `tests/api/` — FastAPI endpoint contracts via `httpx.AsyncClient`. DB and LLM are mocked.
+- `tests/integration/` — real Postgres via testcontainers. Docker must be running.
 
 ## Project Context
 

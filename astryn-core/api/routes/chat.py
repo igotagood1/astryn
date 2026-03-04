@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import services.session as session_service
@@ -9,8 +10,8 @@ from api.schemas import ChatRequest, ChatResponse, ConfirmationAction
 from db.engine import get_db
 from llm.agent import run_agent
 from llm.router import get_provider
-from tools.registry import TOOLS
 from store.domain import pending_confirmations
+from tools.registry import TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +20,14 @@ router = APIRouter()
 
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
-    state = await session_service.ensure_session(db, req.session_id)
-    await session_service.add_user_message(db, req.session_id, req.message)
+    try:
+        state = await session_service.ensure_session(db, req.session_id)
+    except SQLAlchemyError as exc:
+        logger.exception("Database error while loading session %s", req.session_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Database is unavailable. Please try again shortly.",
+        ) from exc
 
     provider = get_provider()
     if not await provider.is_available():
@@ -28,21 +35,30 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
     logger.info("Chat request: session=%s model=%s", req.session_id, provider.model_name)
 
-    history = await session_service.get_history_for_llm(db, req.session_id)
-    old_count = len(history)
+    try:
+        await session_service.add_user_message(db, req.session_id, req.message)
 
-    result = await run_agent(
-        provider=provider,
-        messages=list(history),
-        system=session_service.build_system_prompt(state),
-        session_id=req.session_id,
-        session_state=state,
-        tools=TOOLS if state.active_project else [],
-        db=db,
-    )
+        history = await session_service.get_history_for_llm(db, req.session_id)
+        old_count = len(history)
 
-    await session_service.persist_agent_messages(db, req.session_id, old_count, result.messages)
-    await session_service.update_state(db, req.session_id, state)
+        result = await run_agent(
+            provider=provider,
+            messages=list(history),
+            system=session_service.build_system_prompt(state),
+            session_id=req.session_id,
+            session_state=state,
+            tools=TOOLS if state.active_project else [],
+            db=db,
+        )
+
+        await session_service.persist_agent_messages(db, req.session_id, old_count, result.messages)
+        await session_service.update_state(db, req.session_id, state)
+    except SQLAlchemyError as exc:
+        logger.exception("Database error during chat processing for session %s", req.session_id)
+        raise HTTPException(
+            status_code=503,
+            detail="Database is unavailable. Please try again shortly.",
+        ) from exc
 
     if result.pending:
         pending_confirmations[result.pending.id] = result.pending

@@ -1,0 +1,24 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["astryn-core", "astryn-telegram"]
+
+[tool.ruff.lint]
+select = [
+    "F",     # pyflakes
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific rules
+]
+
+[tool.ruff.lint.per-file-ignores]
+"astryn-core/tests/conftest.py" = ["E402"]  # env patching must happen before imports
+"astryn-core/alembic/*" = ["E402"]          # alembic env has its own import order
+"astryn-core/api/routes/*" = ["B008"]       # Depends() in defaults is the FastAPI convention
+
+[tool.ruff.format]
+quote-style = "double"

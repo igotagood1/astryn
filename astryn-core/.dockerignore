@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 *.pyo
 tmp/
+requirements-dev.txt
+tests/
+pytest.ini

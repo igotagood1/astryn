@@ -21,6 +21,13 @@ Check for:
 - Hardcoded secrets or credentials
 - Insufficient input validation at system boundaries
 
+**Operational Readiness**
+- DB migrations: do new/changed models have corresponding Alembic migrations? Is `alembic upgrade head` called on startup?
+- App lifecycle: does the lifespan initialize all required resources (DB, connections, caches)?
+- Docker wiring: are new services reachable? Do healthchecks verify actual readiness (not just container up)?
+- Dependency injection: are new routes mounted in `main.py`? Are FastAPI dependencies (auth, DB) applied?
+- Configuration: are new env vars added to `AstrynSettings` in `llm/config.py`, documented in `CLAUDE.md`, and present in `docker-compose.yml`?
+
 **Code Quality**
 - Dead code, unused imports, variables
 - Overly complex logic that could be simplified

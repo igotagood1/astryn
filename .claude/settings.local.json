@@ -3,7 +3,22 @@
     "allow": [
       "Bash(ollama list:*)",
       "Bash(brew install:*)",
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "Bash(git:*)",
+      "Bash(.venv/bin/python:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash(git commit*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd astryn-core && .venv/bin/ruff check ../astryn-core/ ../astryn-telegram/ && .venv/bin/ruff format --check ../astryn-core/ ../astryn-telegram/ && .venv/bin/python -m pytest -m 'not integration' -q --tb=short -W error"
+          }
+        ]
+      }
     ]
   }
 }

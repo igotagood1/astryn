@@ -35,7 +35,7 @@ class ChatResponse(BaseModel):
 class ConfirmRequest(BaseModel):
     """Client approval or rejection of a pending tool call."""
 
-    action: str  # "approve" or "reject"
+    action: Literal["approve", "reject"]
 
 
 class SetModelRequest(BaseModel):

@@ -1,10 +1,11 @@
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 import logging
 
-logger = logging.getLogger(__name__)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from core_client import clear_session, get_projects, health_check, list_models, set_model
+from core_client import CoreError, clear_session, get_projects, health_check, list_models
+
+logger = logging.getLogger(__name__)
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -22,8 +23,12 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         projects = await get_projects()
+    except CoreError as e:
+        await update.message.reply_text(f"❌ {e}")
+        return
     except Exception as e:
-        await update.message.reply_text(f"❌ Could not fetch projects: {e}")
+        logger.error("Error fetching projects: %s", e)
+        await update.message.reply_text("❌ Something went wrong. Please try again.")
         return
 
     if not projects:
@@ -39,7 +44,15 @@ async def cmd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     session_id = str(update.effective_user.id)
-    await clear_session(session_id)
+    try:
+        await clear_session(session_id)
+    except CoreError as e:
+        await update.message.reply_text(f"❌ {e}")
+        return
+    except Exception as e:
+        logger.error("Error clearing session %s: %s", session_id, e)
+        await update.message.reply_text("❌ Something went wrong. Please try again.")
+        return
     await update.message.reply_text("🗑️ Conversation cleared.")
 
 
@@ -48,19 +61,24 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         h = await health_check()
         emoji = "✅" if h["ollama"] == "up" else "⚠️"
         await update.message.reply_text(
-            f"{emoji} Status: {h['status']}\n"
-            f"Ollama: {h['ollama']}\n"
-            f"Model: {h['model']}"
+            f"{emoji} Status: {h['status']}\nOllama: {h['ollama']}\nModel: {h['model']}"
         )
+    except CoreError as e:
+        await update.message.reply_text(f"❌ {e}")
     except Exception as e:
-        await update.message.reply_text(f"❌ Core unreachable: {e}")
+        logger.error("Error checking status: %s", e)
+        await update.message.reply_text("❌ Core unreachable. Please try again.")
 
 
 async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         data = await list_models()
+    except CoreError as e:
+        await update.message.reply_text(f"❌ {e}")
+        return
     except Exception as e:
-        await update.message.reply_text(f"❌ Could not reach core: {e}")
+        logger.error("Error fetching models: %s", e)
+        await update.message.reply_text("❌ Something went wrong. Please try again.")
         return
 
     active = data["active"]

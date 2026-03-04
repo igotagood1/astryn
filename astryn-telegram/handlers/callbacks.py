@@ -1,10 +1,12 @@
+import contextlib
 import logging
 
+import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
 import config
-from core_client import confirm_tool, set_model, set_project_direct
+from core_client import CoreError, confirm_tool, set_model, set_project_direct
 from handlers.message import _send_result  # used by handle_confirmation
 
 logger = logging.getLogger(__name__)
@@ -30,10 +32,8 @@ async def handle_confirmation(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if action == "context":
         # Cancel the pending tool call and invite the user to add more detail.
         # The agent will see it was rejected and wait for the next message.
-        try:
+        with contextlib.suppress(CoreError, httpx.HTTPStatusError):
             await confirm_tool(confirmation_id, approved=False)
-        except Exception:
-            pass  # already expired or cleared — that's fine
         await query.message.reply_text("Go ahead — what would you like to add or change?")
         return
 
@@ -44,9 +44,11 @@ async def handle_confirmation(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         result = await confirm_tool(confirmation_id, approved)
         await _send_result(query.message, result)
+    except CoreError as e:
+        await query.message.reply_text(f"❌ {e}")
     except Exception as e:
         logger.error("Error processing confirmation %s: %s", confirmation_id, e)
-        await query.message.reply_text(f"❌ Error: {e}")
+        await query.message.reply_text("❌ Something went wrong. Please try again.")
 
 
 async def handle_project_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -57,7 +59,7 @@ async def handle_project_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     # callback_data format: "project:<name>"
-    project_name = query.data[len("project:"):]
+    project_name = query.data[len("project:") :]
     session_id = str(update.effective_user.id)
 
     await query.edit_message_reply_markup(reply_markup=None)
@@ -68,9 +70,11 @@ async def handle_project_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"Active project: *{project_name}*\n\nWhat would you like to do?",
             parse_mode="Markdown",
         )
+    except CoreError as e:
+        await query.message.reply_text(f"❌ {e}")
     except Exception as e:
         logger.error("Error selecting project %s: %s", project_name, e)
-        await query.message.reply_text(f"❌ Error: {e}")
+        await query.message.reply_text("❌ Something went wrong. Please try again.")
 
 
 async def handle_model_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -81,11 +85,13 @@ async def handle_model_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     # callback_data format: "model_select:<model_name>"
-    model_name = query.data[len("model_select:"):]
+    model_name = query.data[len("model_select:") :]
 
     try:
         data = await set_model(model_name)
         await query.edit_message_text(f"✅ Switched to `{data['active']}`", parse_mode="Markdown")
+    except CoreError as e:
+        await query.edit_message_text(f"❌ {e}")
     except Exception as e:
         logger.error("Error switching model to %s: %s", model_name, e)
-        await query.edit_message_text(f"❌ {e}")
+        await query.edit_message_text("❌ Something went wrong. Please try again.")
