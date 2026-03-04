@@ -5,6 +5,7 @@ source of truth; in-memory pending_confirmations remain transient.
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -71,20 +72,47 @@ async def clear(db: AsyncSession, session_id: str) -> None:
     )
 
 
+_STALE_SESSION_THRESHOLD = timedelta(hours=2)
+
+
+def _is_stale(state: SessionState) -> bool:
+    """Return True if the session hasn't been touched recently."""
+    if state.last_activity_at is None:
+        return False
+    now = datetime.now(UTC)
+    last = state.last_activity_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return (now - last) > _STALE_SESSION_THRESHOLD
+
+
 def build_system_prompt(state: SessionState) -> str:
     """Assemble the full system prompt by injecting current session state.
 
     Sync — no DB needed. The base prompt lives in prompts/system.md.
     """
     if state.active_project:
+        stale_note = ""
+        if _is_stale(state):
+            stale_note = (
+                " (set from a previous conversation — if the user seems to be "
+                "asking about something unrelated, ask if they want to switch)"
+            )
         return (
             SYSTEM_PROMPT + f"\n\n## Current Session State\n\n"
-            f"Active project: {state.active_project}\n"
-            f"Do NOT call list_projects or set_project again "
-            f"unless the user explicitly asks to change projects."
+            f"Active project: {state.active_project}{stale_note}\n"
+            f"You have full access to this project's files. "
+            f"Don't call list_projects or set_project again "
+            f"unless the user asks to switch projects.\n"
+            f"If a file path fails, try to resolve it "
+            f"(check the path, list files) rather than asking the user."
         )
     return (
         SYSTEM_PROMPT + "\n\n## Current Session State\n\n"
-        "No active project is set. Respond conversationally.\n"
-        "The user can pick a project with the /projects command in Telegram."
+        "No project is selected yet. You can use list_projects and set_project.\n"
+        "If the user wants to explore or work on code, show them what projects "
+        "are available and let them choose. If they mention a project by name, "
+        "go ahead and set it — then continue with what they asked for.\n"
+        "For general questions or conversation, just respond naturally — "
+        "not everything requires a project."
     )

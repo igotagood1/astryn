@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from tools.models import (
     ApplyDiff,
+    GrepFiles,
     ListFiles,
     ListProjects,
     ReadFile,
@@ -117,8 +118,19 @@ REGISTRY: dict[str, ToolDef] = {
     "search_files": ToolDef(
         schema=_schema_from_model("search_files", SearchFiles),
     ),
+    "grep_files": ToolDef(
+        schema=_schema_from_model("grep_files", GrepFiles),
+    ),
 }
 
 # The list of tool schemas passed to the LLM on every request.
 # Derived directly from REGISTRY so it never drifts out of sync.
 TOOLS: list[dict] = [t.schema for t in REGISTRY.values()]
+
+# Minimal tool set for sessions with no active project.
+# The user can still list and select projects; file/code tools
+# become available once a project is set.
+_NO_PROJECT_TOOL_NAMES = {"list_projects", "set_project"}
+NO_PROJECT_TOOLS: list[dict] = [
+    t.schema for name, t in REGISTRY.items() if name in _NO_PROJECT_TOOL_NAMES
+]

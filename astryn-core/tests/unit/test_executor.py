@@ -41,6 +41,9 @@ class TestRequiresConfirmation:
     def test_search_files_no_confirm(self):
         assert requires_confirmation("search_files", {"pattern": "*.py"}) is False
 
+    def test_grep_files_no_confirm(self):
+        assert requires_confirmation("grep_files", {"pattern": "def main"}) is False
+
     def test_run_command_immediate(self):
         assert requires_confirmation("run_command", {"command": "git status"}) is False
 
@@ -127,3 +130,108 @@ class TestExecuteTool:
                 SessionState(active_project="proj"),
             )
         assert "Security error" in result
+
+
+class TestGrepFiles:
+    async def test_finds_matches(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "main.py").write_text("def hello():\n    pass\ndef world():\n    pass\n")
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "grep_files",
+                {"pattern": "def \\w+"},
+                SessionState(active_project="proj"),
+            )
+
+        assert "main.py" in result
+        assert "def hello" in result
+        assert "def world" in result
+
+    async def test_no_matches(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "main.py").write_text("print('hi')\n")
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "grep_files",
+                {"pattern": "def \\w+"},
+                SessionState(active_project="proj"),
+            )
+
+        assert "No matches" in result
+
+    async def test_include_filter(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "main.py").write_text("hello world\n")
+        (proj / "readme.md").write_text("hello docs\n")
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "grep_files",
+                {"pattern": "hello", "include": "*.py"},
+                SessionState(active_project="proj"),
+            )
+
+        assert "main.py" in result
+        assert "readme.md" not in result
+
+    async def test_invalid_regex(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "f.py").write_text("x\n")
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "grep_files",
+                {"pattern": "[invalid"},
+                SessionState(active_project="proj"),
+            )
+
+        assert "Invalid" in result or "invalid" in result
+
+    async def test_no_project(self):
+        result = await execute_tool(
+            "grep_files",
+            {"pattern": "test"},
+            SessionState(),
+        )
+        assert "No project is active" in result
+
+    async def test_skips_noise_dirs(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        venv = proj / ".venv" / "lib"
+        venv.mkdir(parents=True)
+        (venv / "cached.py").write_text("def cached(): pass\n")
+        (proj / "main.py").write_text("def main(): pass\n")
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "grep_files",
+                {"pattern": "def \\w+"},
+                SessionState(active_project="proj"),
+            )
+
+        assert "main.py" in result
+        assert "cached.py" not in result
+
+    async def test_max_results(self, tmp_path):
+        """Results should be capped at 100 with a truncation note."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        # Create a file with >100 matching lines
+        lines = [f"match_{i}" for i in range(150)]
+        (proj / "big.py").write_text("\n".join(lines))
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "grep_files",
+                {"pattern": "match_\\d+"},
+                SessionState(active_project="proj"),
+            )
+
+        assert "truncated" in result.lower() or "more results" in result.lower()

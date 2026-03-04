@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 from difflib import get_close_matches
 from typing import TypedDict  # used for _ChatResult
@@ -68,16 +70,34 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     session_id = str(update.effective_user.id)
-    await update.message.chat.send_action("typing")
+    typing_task = asyncio.create_task(_keep_typing(update.message.chat))
 
     try:
         result: _ChatResult = await send_message(update.message.text, session_id)
+        typing_task.cancel()
         await _send_result(update.message, result)
     except CoreError as e:
+        typing_task.cancel()
         await update.message.reply_text(f"❌ {e}")
     except Exception as e:
+        typing_task.cancel()
         logger.error("Error handling message for session %s: %s", session_id, e)
         await update.message.reply_text("❌ Something went wrong. Please try again.")
+
+
+async def _keep_typing(chat, interval: float = 4.0):
+    """Resend the typing indicator every `interval` seconds until cancelled.
+
+    Telegram's typing indicator expires after ~5 seconds. This keeps it
+    visible for the entire duration of a long-running core request.
+    """
+    try:
+        while True:
+            with contextlib.suppress(Exception):
+                await chat.send_action("typing")
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        pass
 
 
 async def _send_result(message: Message, result: _ChatResult):
@@ -128,13 +148,63 @@ async def _send_result(message: Message, result: _ChatResult):
             await _send_chunked(message, reply or "(no reply)")
 
 
+def _split_message(text: str, max_len: int = 4096) -> list[str]:
+    """Split text into chunks respecting newlines and code block boundaries.
+
+    When a split occurs inside a fenced code block (```), the current chunk
+    gets a closing fence and the next chunk reopens with the same language tag.
+    """
+    if len(text) <= max_len:
+        return [text]
+
+    chunks: list[str] = []
+    remaining = text
+    in_code_block = False
+    lang_tag = ""
+
+    while remaining:
+        if len(remaining) <= max_len:
+            chunks.append(remaining)
+            break
+
+        # Find the best split point: last newline within max_len
+        split_at = remaining.rfind("\n", 0, max_len)
+        if split_at <= 0:
+            # No newline found — hard split at max_len (no char to skip)
+            chunk = remaining[:max_len]
+            remaining = remaining[max_len:]
+        else:
+            chunk = remaining[:split_at]
+            remaining = remaining[split_at + 1 :]  # skip the newline
+
+        # Track code fence state within this chunk
+        for line in chunk.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                if not in_code_block:
+                    in_code_block = True
+                    lang_tag = stripped[3:].strip()
+                else:
+                    in_code_block = False
+                    lang_tag = ""
+
+        if in_code_block:
+            # Close the fence in this chunk, reopen in next
+            chunk += "\n```"
+            remaining = f"```{lang_tag}\n{remaining}"
+
+        chunks.append(chunk)
+
+    return chunks
+
+
 async def _send_chunked(message: Message, text: str, reply_markup=None):
     """Split long text into Telegram's 4096-char limit and send each chunk.
 
     Attaches reply_markup to the last chunk only. Falls back to plain text
     if Markdown parsing fails for a chunk (e.g. unbalanced backticks).
     """
-    chunks = [text[i : i + 4096] for i in range(0, len(text), 4096)]
+    chunks = _split_message(text)
     for i, chunk in enumerate(chunks):
         markup = reply_markup if i == len(chunks) - 1 else None
         try:

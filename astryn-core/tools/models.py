@@ -79,6 +79,23 @@ class SearchFiles(BaseModel):
     )
 
 
+class GrepFiles(BaseModel):
+    """Search file contents for lines matching a regex pattern.
+
+    Returns matching lines with file paths and line numbers.
+    Useful for finding function definitions, usages, TODOs, etc.
+    """
+
+    pattern: str = Field(description="Regex pattern to search for, e.g. 'def main' or 'TODO'")
+    include: str = Field(
+        default="",
+        description=(
+            "Glob filter for filenames, e.g. '*.py' or '*.ts'. "
+            "Empty string means search all text files."
+        ),
+    )
+
+
 type AnyTool = (
     ListProjects
     | SetProject
@@ -88,6 +105,7 @@ type AnyTool = (
     | WriteFile
     | RunCommand
     | SearchFiles
+    | GrepFiles
 )
 
 
@@ -114,5 +132,7 @@ def parse_tool(name: str, args: dict) -> AnyTool:
             return RunCommand.model_validate(args)
         case "search_files":
             return SearchFiles.model_validate(args)
+        case "grep_files":
+            return GrepFiles.model_validate(args)
         case _:
             raise ValueError(f"Unknown tool: {name!r}")

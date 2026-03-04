@@ -9,7 +9,8 @@ don't survive restarts by design.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,6 +27,7 @@ class SessionState:
     """
 
     active_project: str | None = None
+    last_activity_at: datetime | None = field(default=None, repr=False)
 
 
 # ── In-memory transient state ────────────────────────────────────────────────
