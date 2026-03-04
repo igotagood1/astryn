@@ -1,10 +1,13 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
+import services.session as session_service
 from api.deps import verify_api_key
 from api.schemas import ChatResponse, ConfirmationAction, ConfirmRequest
-from store.memory import pending_confirmations, sessions
+from db.engine import get_db
+from store.domain import pending_confirmations
 from llm.agent import resume_agent
 from llm.router import get_provider
 
@@ -18,7 +21,11 @@ router = APIRouter()
     response_model=ChatResponse,
     dependencies=[Depends(verify_api_key)],
 )
-async def confirm_tool(confirmation_id: str, req: ConfirmRequest):
+async def confirm_tool(
+    confirmation_id: str,
+    req: ConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+):
     if req.action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
 
@@ -32,11 +39,12 @@ async def confirm_tool(confirmation_id: str, req: ConfirmRequest):
     )
 
     provider = get_provider()
-    result = await resume_agent(provider=provider, pending=pending, approved=approved)
+    old_count = len(pending.messages)
 
-    session = sessions.get(pending.session_id)
-    if session is not None:
-        session.history = result.messages
+    result = await resume_agent(provider=provider, pending=pending, approved=approved, db=db)
+
+    await session_service.persist_agent_messages(db, pending.session_id, old_count, result.messages)
+    await session_service.update_state(db, pending.session_id, pending.session_state)
 
     if result.pending:
         pending_confirmations[result.pending.id] = result.pending
