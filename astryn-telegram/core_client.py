@@ -1,14 +1,9 @@
-import os
-
 import httpx
-from dotenv import load_dotenv
 
-load_dotenv()
+import config
 
-CORE_URL = os.getenv("ASTRYN_CORE_URL", "http://localhost:8000")
-API_KEY = os.getenv("ASTRYN_CORE_API_KEY")
-if not API_KEY:
-    raise RuntimeError("ASTRYN_CORE_API_KEY environment variable is not set")
+CORE_URL = config.ASTRYN_CORE_URL
+API_KEY = config.ASTRYN_CORE_API_KEY
 
 
 async def send_message(message: str, session_id: str) -> dict:
@@ -45,6 +40,7 @@ async def clear_session(session_id: str) -> None:
 async def health_check() -> dict:
     async with httpx.AsyncClient(timeout=5) as client:
         r = await client.get(f"{CORE_URL}/health")
+        r.raise_for_status()
         return r.json()
 
 

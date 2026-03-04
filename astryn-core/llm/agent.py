@@ -1,21 +1,30 @@
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 
+from store.memory import SessionState
 from llm.base import LLMProvider
-from tools.definitions import TOOLS
 from tools.executor import build_preview, execute_tool, requires_confirmation
+from tools.registry import TOOLS
+
+logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 10
 
 MODEL_TOOL_UNSUPPORTED_REPLY = (
-    "⚠️ This model doesn't support tool use — it described the action instead of executing it.\n\n"
+    "This model doesn't support tool use — it described the action instead of executing it.\n\n"
     "Use `/model` to switch to one that does. `llama3.1:8b` is a reliable choice."
 )
 
 
 def _looks_like_failed_tool_call(content: str) -> bool:
-    """Detect when a model outputs a tool call as plain text instead of using the tool API."""
+    """Detect when a model outputs a tool call as plain text instead of using the tool API.
+
+    Some models that don't properly support tool use will respond with a JSON
+    string describing the call rather than a structured tool_calls list. This
+    heuristic catches that case so we can surface a helpful error message.
+    """
     content = content.strip()
     if not content.startswith("{"):
         return False
@@ -28,6 +37,13 @@ def _looks_like_failed_tool_call(content: str) -> bool:
 
 @dataclass
 class PendingConfirmation:
+    """Snapshot of a paused agent loop waiting for user approval.
+
+    When the agent encounters a tool that requires confirmation, it stops,
+    stores everything needed to resume, and returns this to the API layer.
+    The API layer persists it in pending_confirmations until the user responds.
+    """
+
     id: str
     session_id: str
     tool_name: str
@@ -37,11 +53,18 @@ class PendingConfirmation:
     system: str
     messages: list[dict]
     remaining_tool_calls: list[dict] = field(default_factory=list)
-    session_state: dict = field(default_factory=dict)
+    session_state: SessionState = field(default_factory=SessionState)
 
 
 @dataclass
 class AgentResult:
+    """Outcome of a completed or paused agent loop iteration.
+
+    If `pending` is set, the loop is paused and the caller should present
+    the confirmation to the user before calling resume_agent().
+    If `pending` is None, `reply` contains the agent's final answer.
+    """
+
     reply: str
     model: str
     messages: list[dict]
@@ -53,20 +76,22 @@ async def run_agent(
     messages: list[dict],
     system: str,
     session_id: str,
-    session_state: dict,
+    session_state: SessionState,
 ) -> AgentResult:
-    """
-    Run the agentic tool loop.
+    """Run the agentic tool loop.
 
-    Calls the LLM, executes any safe tool calls immediately, and returns
-    either a final reply or a paused state when a tool needs user confirmation.
+    Calls the LLM repeatedly, executing safe tool calls immediately and
+    pausing on any tool that requires user confirmation. Returns either a
+    final reply or a paused AgentResult with a PendingConfirmation.
     """
-    for _ in range(MAX_ITERATIONS):
+    for iteration in range(MAX_ITERATIONS):
+        logger.debug("Agent iteration %d: session=%s", iteration + 1, session_id)
         response = await provider.chat(messages, system, tools=TOOLS)
         messages = [*messages, response.to_message()]
 
         if not response.tool_calls:
             if _looks_like_failed_tool_call(response.content):
+                logger.warning("Model output a tool call as plain text: session=%s", session_id)
                 return AgentResult(
                     reply=MODEL_TOOL_UNSUPPORTED_REPLY,
                     model=response.model,
@@ -88,6 +113,7 @@ async def run_agent(
 
         messages = outcome  # updated messages after all safe tool calls ran
 
+    logger.warning("Agent hit max iterations without a final reply: session=%s", session_id)
     return AgentResult(
         reply="[Agent reached max iterations without a final response. Try rephrasing.]",
         model=provider.model_name,
@@ -100,15 +126,16 @@ async def resume_agent(
     pending: PendingConfirmation,
     approved: bool,
 ) -> AgentResult:
-    """
-    Resume the agent after the user approves or rejects a pending tool call.
+    """Resume the agent after the user approves or rejects a pending tool call.
 
     Executes or skips the tool, then continues the loop with any remaining
     tool calls from the same LLM response before asking the LLM again.
     """
     if approved:
+        logger.info("Executing approved tool: %s", pending.tool_name)
         tool_result = await execute_tool(pending.tool_name, pending.tool_args, pending.session_state)
     else:
+        logger.info("Tool rejected by user: %s", pending.tool_name)
         tool_result = "User rejected this action. Do not retry it."
 
     messages = [
@@ -143,15 +170,15 @@ async def _process_tool_calls(
     messages: list[dict],
     system: str,
     session_id: str,
-    session_state: dict,
+    session_state: SessionState,
     provider: LLMProvider,
 ) -> "list[dict] | AgentResult":
-    """
-    Process a batch of tool calls sequentially.
+    """Process a batch of tool calls sequentially.
 
     Runs safe tools immediately. Pauses and returns an AgentResult with a
     PendingConfirmation when a tool that requires user approval is encountered.
-    The remaining unprocessed calls are stored so they can be resumed later.
+    Remaining unprocessed calls are stored on the PendingConfirmation so they
+    can be picked up after the user responds.
     """
     for i, tool_call in enumerate(tool_calls):
         fn = tool_call.get("function", {})
@@ -161,6 +188,7 @@ async def _process_tool_calls(
         tool_call_id = tool_call.get("id") or str(uuid.uuid4())
 
         if requires_confirmation(tool_name, tool_args):
+            logger.info("Tool requires confirmation: %s session=%s", tool_name, session_id)
             return AgentResult(
                 reply="",
                 model=provider.model_name,
@@ -179,6 +207,7 @@ async def _process_tool_calls(
                 ),
             )
 
+        logger.info("Executing tool immediately: %s session=%s", tool_name, session_id)
         result = await execute_tool(tool_name, tool_args, session_state)
         messages = [*messages, {"role": "tool", "tool_call_id": tool_call_id, "content": result}]
 

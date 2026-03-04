@@ -1,7 +1,5 @@
-import os
 import logging
 
-from dotenv import load_dotenv
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -10,22 +8,19 @@ from telegram.ext import (
     filters,
 )
 
+# config must be imported before handlers so env vars are loaded and validated
+# before any other module tries to read them.
+import config
 from handlers.callbacks import handle_confirmation, handle_model_select
 from handlers.commands import cmd_clear, cmd_help, cmd_model, cmd_status
 from handlers.message import handle_message
 
-load_dotenv()
-
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is not set")
-
 
 class _RedactSecretsFilter(logging.Filter):
-    """
-    Scrubs secrets from every log record on every logger.
-    Applied to the root logger so nothing slips through regardless of
-    which logger emits the message or what level it runs at.
+    """Scrubs secrets from every log record before it is emitted.
+
+    Applied to the root logger so nothing leaks regardless of which logger
+    emits the message or what level it runs at.
     """
 
     def __init__(self, secrets: list[str]):
@@ -42,13 +37,15 @@ class _RedactSecretsFilter(logging.Filter):
 
 
 logging.basicConfig(level=logging.INFO)
-_secrets_filter = _RedactSecretsFilter([TOKEN, os.getenv("ASTRYN_CORE_API_KEY")])
+_secrets_filter = _RedactSecretsFilter([config.TELEGRAM_BOT_TOKEN, config.ASTRYN_CORE_API_KEY])
 for handler in logging.root.handlers:
     handler.addFilter(_secrets_filter)
 
+logger = logging.getLogger(__name__)
+
 
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("clear", cmd_clear))
@@ -58,7 +55,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_model_select, pattern=r"^model_select:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Starting Astryn Telegram bot (polling mode)...")
+    logger.info("Starting Astryn Telegram bot (polling mode)...")
     app.run_polling()
 
 

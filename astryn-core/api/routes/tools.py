@@ -1,28 +1,24 @@
-from fastapi import APIRouter, HTTPException, Header
-from pydantic import BaseModel
+import logging
 
-from api.routes.chat import ChatResponse, ConfirmationInfo
-from api.state import pending_confirmations, sessions
+from fastapi import APIRouter, Depends, HTTPException
+
+from api.deps import verify_api_key
+from api.schemas import ChatResponse, ConfirmationInfo, ConfirmRequest
+from store.memory import pending_confirmations, sessions
 from llm.agent import resume_agent
-from llm.config import settings
 from llm.router import get_provider
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-class ConfirmRequest(BaseModel):
-    action: str  # "approve" or "reject"
-
-
-@router.post("/confirm/{confirmation_id}", response_model=ChatResponse)
-async def confirm_tool(
-    confirmation_id: str,
-    req: ConfirmRequest,
-    x_api_key: str = Header(...),
-):
-    if x_api_key != settings.astryn_api_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-
+@router.post(
+    "/confirm/{confirmation_id}",
+    response_model=ChatResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def confirm_tool(confirmation_id: str, req: ConfirmRequest):
     if req.action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
 
@@ -30,12 +26,13 @@ async def confirm_tool(
     if not pending:
         raise HTTPException(status_code=404, detail="Confirmation not found or already resolved")
 
-    provider = get_provider()
-    result = await resume_agent(
-        provider=provider,
-        pending=pending,
-        approved=(req.action == "approve"),
+    approved = req.action == "approve"
+    logger.info(
+        "Confirmation %s: tool=%s action=%s", confirmation_id, pending.tool_name, req.action
     )
+
+    provider = get_provider()
+    result = await resume_agent(provider=provider, pending=pending, approved=approved)
 
     session = sessions.get(pending.session_id)
     if session is not None:
@@ -43,6 +40,11 @@ async def confirm_tool(
 
     if result.pending:
         pending_confirmations[result.pending.id] = result.pending
+        logger.info(
+            "Agent paused for next confirmation: id=%s tool=%s",
+            result.pending.id,
+            result.pending.tool_name,
+        )
         return ChatResponse(
             reply=result.reply,
             model=result.model,
