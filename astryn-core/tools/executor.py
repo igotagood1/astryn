@@ -1,28 +1,30 @@
-import os
+import logging
 import shlex
 import subprocess
-from pathlib import Path
 
-from tools.safety import validate_path, validate_command, REPOS_ROOT, SecurityError
+from store.memory import SessionState
+from tools.registry import REGISTRY
+from tools.safety import REPOS_ROOT, SecurityError, validate_command, validate_path
+
+logger = logging.getLogger(__name__)
 
 NOISE_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", "dist", "build", ".eggs"}
 
 
 async def list_projects() -> str:
     projects = [
-        d.name for d in REPOS_ROOT.iterdir()
-        if d.is_dir() and not d.name.startswith(".")
+        d.name for d in REPOS_ROOT.iterdir() if d.is_dir() and not d.name.startswith(".")
     ]
     if not projects:
         return "No projects found in ~/repos."
-    return "Projects in ~/repos:\n" + "\n".join(f"• {p}" for p in sorted(projects))
+    return "Projects in ~/repos:\n" + "\n".join(f"- {p}" for p in sorted(projects))
 
 
-async def set_project(name: str, session_state: dict) -> str:
+async def set_project(name: str, session_state: SessionState) -> str:
     path = validate_path(name)
     if not path.is_dir():
         return f"'{name}' is not a directory in ~/repos."
-    session_state["active_project"] = name
+    session_state.active_project = name
     return f"Active project set to '{name}'. Ready to work."
 
 
@@ -35,8 +37,8 @@ async def list_files(path: str = ".", active_project: str | None = None) -> str:
     for item in sorted(resolved.iterdir()):
         if item.name in NOISE_DIRS or item.name.startswith("."):
             continue
-        prefix = "📁" if item.is_dir() else "📄"
-        entries.append(f"{prefix} {item.name}")
+        kind = "[dir]" if item.is_dir() else "[file]"
+        entries.append(f"{kind} {item.name}")
 
     return "\n".join(entries) if entries else "(empty directory)"
 
@@ -63,8 +65,8 @@ async def apply_diff(
     new_str: str,
     active_project: str | None = None,
 ) -> str:
-    """
-    Apply a targeted search-and-replace to a file.
+    """Apply a targeted search-and-replace to a file.
+
     Fails cleanly if old_str is not found or is ambiguous (appears more than once).
     """
     resolved = validate_path(path, active_project)
@@ -87,20 +89,23 @@ async def apply_diff(
 
     new_content = content.replace(old_str, new_str, 1)
     resolved.write_text(new_content, encoding="utf-8")
-    return f"✅ Applied diff to {path}"
+    logger.info("Applied diff to: %s", path)
+    return f"Applied diff to {path}"
 
 
 async def write_file(path: str, content: str, active_project: str | None = None) -> str:
     resolved = validate_path(path, active_project)
     resolved.parent.mkdir(parents=True, exist_ok=True)
     resolved.write_text(content, encoding="utf-8")
-    return f"✅ Written: {path}"
+    logger.info("Wrote file: %s", path)
+    return f"Written: {path}"
 
 
 async def run_command(command: str, active_project: str | None = None) -> str:
     validate_command(command)  # raises SecurityError if blocked
 
     cwd = str(validate_path(".", active_project)) if active_project else str(REPOS_ROOT)
+    logger.info("Running command: %r cwd=%s", command, cwd)
 
     try:
         result = subprocess.run(
@@ -115,17 +120,18 @@ async def run_command(command: str, active_project: str | None = None) -> str:
         return output.strip() or "(no output)"
     except subprocess.TimeoutExpired:
         return "Command timed out after 60 seconds."
-    except Exception as e:
+    except OSError as e:
+        logger.error("Command failed with OSError: %s", e)
         return f"Error running command: {e}"
 
 
 async def execute_tool(
     tool_name: str,
     tool_args: dict,
-    session_state: dict,
+    session_state: SessionState,
 ) -> str:
-    """Dispatch a tool call. Returns string result."""
-    active_project = session_state.get("active_project")
+    """Dispatch a tool call by name. Returns a plain-text result for the LLM."""
+    active_project = session_state.active_project
 
     try:
         match tool_name:
@@ -149,42 +155,34 @@ async def execute_tool(
             case "run_command":
                 return await run_command(tool_args["command"], active_project)
             case _:
+                logger.warning("Unknown tool called: %s", tool_name)
                 return f"Unknown tool: {tool_name}"
     except SecurityError as e:
+        logger.warning("Security error for tool %s: %s", tool_name, e)
         return f"Security error: {e} Use a relative path within the active project."
 
 
 def requires_confirmation(tool_name: str, tool_args: dict) -> bool:
-    """Returns True if this tool call needs user confirmation before executing."""
-    if tool_name in ("write_file", "apply_diff"):
-        return True
-    if tool_name == "run_command":
-        try:
-            needs_confirm, _ = validate_command(tool_args.get("command", ""))
-            return needs_confirm
-        except Exception:
-            return True  # if in doubt, confirm
-    return False
+    """Return True if this tool call needs user confirmation before executing.
+
+    Delegates to the tool's registry entry so the logic is co-located with
+    the tool definition rather than scattered across separate functions.
+    """
+    tool = REGISTRY.get(tool_name)
+    if not tool:
+        return True  # unknown tools always require confirmation
+    if callable(tool.requires_confirmation):
+        return tool.requires_confirmation(tool_args)
+    return bool(tool.requires_confirmation)
 
 
 def build_preview(tool_name: str, tool_args: dict) -> str:
-    """Human-readable description of what this tool will do."""
-    match tool_name:
-        case "apply_diff":
-            path = tool_args.get("path", "?")
-            old = tool_args.get("old_str", "")
-            new = tool_args.get("new_str", "")
-            return (
-                f"Apply diff to `{path}`:\n\n"
-                f"```diff\n- {old}\n+ {new}\n```"
-            )
-        case "write_file":
-            path = tool_args.get("path", "?")
-            content = tool_args.get("content", "")
-            preview_content = content[:1500] + ("\n...[truncated]" if len(content) > 1500 else "")
-            return f"Write to `{path}`:\n\n```\n{preview_content}\n```"
-        case "run_command":
-            return f"Run: `{tool_args.get('command', '?')}`"
-        case _:
-            return f"Execute `{tool_name}` with args: {tool_args}"
-            
+    """Return a human-readable description of what this tool call will do.
+
+    Used in the Telegram confirmation prompt. Delegates to the tool's
+    registry entry so preview logic stays co-located with the tool definition.
+    """
+    tool = REGISTRY.get(tool_name)
+    if tool and tool.build_preview:
+        return tool.build_preview(tool_args)
+    return f"Execute `{tool_name}` with args: {tool_args}"

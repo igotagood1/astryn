@@ -1,9 +1,16 @@
+import logging
+
 from fastapi import FastAPI
 
 from api.routes.chat import router as chat_router
 from api.routes.health import router as health_router
 from api.routes.models import router as models_router
 from api.routes.tools import router as tools_router
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+)
 
 app = FastAPI(title="Astryn Core", version="0.2.0")
 

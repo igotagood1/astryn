@@ -1,19 +1,20 @@
-import os
+import logging
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
+import config
 from core_client import confirm_tool, set_model
 from handlers.message import _send_result
 
-ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID", "0"))
+logger = logging.getLogger(__name__)
 
 
 async def handle_confirmation(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if update.effective_user.id != ALLOWED_USER_ID:
+    if update.effective_user.id != config.ALLOWED_USER_ID:
         return
 
     # callback_data format: "confirm:<id>:<action>"
@@ -44,6 +45,7 @@ async def handle_confirmation(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         result = await confirm_tool(confirmation_id, approved)
         await _send_result(query.message, result)
     except Exception as e:
+        logger.error("Error processing confirmation %s: %s", confirmation_id, e)
         await query.message.reply_text(f"❌ Error: {e}")
 
 
@@ -51,7 +53,7 @@ async def handle_model_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if update.effective_user.id != ALLOWED_USER_ID:
+    if update.effective_user.id != config.ALLOWED_USER_ID:
         return
 
     # callback_data format: "model_select:<model_name>"
@@ -61,4 +63,5 @@ async def handle_model_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         data = await set_model(model_name)
         await query.edit_message_text(f"✅ Switched to `{data['active']}`", parse_mode="Markdown")
     except Exception as e:
+        logger.error("Error switching model to %s: %s", model_name, e)
         await query.edit_message_text(f"❌ {e}")
