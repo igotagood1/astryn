@@ -1,6 +1,6 @@
-from typing import Annotated, Literal
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ChatRequest(BaseModel):
@@ -8,12 +8,6 @@ class ChatRequest(BaseModel):
 
     message: str
     session_id: str = "default"
-
-
-# ── Action payloads ───────────────────────────────────────────────────────────
-# Each action type the agent can return is its own class with a `type` literal.
-# Adding a new interactive response means adding a new class here — ChatResponse
-# never needs to change.
 
 
 class ConfirmationAction(BaseModel):
@@ -24,29 +18,18 @@ class ConfirmationAction(BaseModel):
     preview: str
 
 
-class ProjectSelectAction(BaseModel):
-    """Agent called list_projects — client should render these as selectable buttons."""
-
-    type: Literal["project_select"] = "project_select"
-    projects: list[str]
-
-
-Action = Annotated[
-    ConfirmationAction | ProjectSelectAction,
-    Field(discriminator="type"),
-]
-
-
 class ChatResponse(BaseModel):
     """Response from the /chat or /confirm endpoints.
 
     `action` carries any structured UI payload the client needs to render.
     If None, `reply` is a plain text final answer with nothing else to do.
+    New interactive response types add a new Action subclass and a new case
+    in the Telegram _send_result dispatcher — ChatResponse itself never changes.
     """
 
     reply: str
     model: str
-    action: Action | None = None
+    action: ConfirmationAction | None = None
 
 
 class ConfirmRequest(BaseModel):
@@ -59,3 +42,10 @@ class SetModelRequest(BaseModel):
     """Request to switch the active LLM model."""
 
     model: str
+
+
+class SetProjectRequest(BaseModel):
+    """Request to set the active project for a session directly (bypasses LLM)."""
+
+    name: str
+    session_id: str = "default"

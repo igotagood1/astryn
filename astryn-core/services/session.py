@@ -44,15 +44,14 @@ def build_system_prompt(state: SessionState) -> str:
     """
     if state.active_project:
         return (
-            SYSTEM_PROMPT
-            + f"\n\n## Current Session State\n\n"
+            SYSTEM_PROMPT + f"\n\n## Current Session State\n\n"
             f"Active project: {state.active_project}\n"
             f"Do NOT call list_projects or set_project again unless the user explicitly asks to change projects."
         )
     return (
-        SYSTEM_PROMPT
-        + "\n\n## Current Session State\n\n"
-        "No active project is set. Call list_projects() and ask the user to pick one before doing any file operations."
+        SYSTEM_PROMPT + "\n\n## Current Session State\n\n"
+        "No active project is set. Respond conversationally.\n"
+        "The user can pick a project with the /projects command in Telegram."
     )
 
 
@@ -63,7 +62,13 @@ def clear(session_id: str) -> None:
     when a user clears mid-conversation while a tool is awaiting approval.
     """
     sessions.pop(session_id, None)
-    stale_ids = [k for k, v in pending_confirmations.items() if v.session_id == session_id]
+    stale_ids = [
+        k for k, v in pending_confirmations.items() if v.session_id == session_id
+    ]
     for k in stale_ids:
         del pending_confirmations[k]
-    logger.info("Cleared session: %s (%d stale confirmations removed)", session_id, len(stale_ids))
+    logger.info(
+        "Cleared session: %s (%d stale confirmations removed)",
+        session_id,
+        len(stale_ids),
+    )

@@ -4,9 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 
 import services.session as session_service
 from api.deps import verify_api_key
-from api.schemas import ChatRequest, ChatResponse, ConfirmationAction, ProjectSelectAction
+from api.schemas import ChatRequest, ChatResponse, ConfirmationAction
 from llm.agent import run_agent
 from llm.router import get_provider
+from tools.registry import TOOLS
 from store.memory import pending_confirmations
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ async def chat(req: ChatRequest):
         system=session_service.build_system_prompt(session.state),
         session_id=req.session_id,
         session_state=session.state,
+        tools=TOOLS if session.state.active_project else [],
     )
 
     session.history = result.messages
@@ -48,10 +50,7 @@ async def chat(req: ChatRequest):
             action=ConfirmationAction(id=result.pending.id, preview=result.pending.preview),
         )
 
-    action = (
-        ProjectSelectAction(projects=result.projects) if result.projects else None
-    )
-    return ChatResponse(reply=result.reply, model=result.model, action=action)
+    return ChatResponse(reply=result.reply, model=result.model)
 
 
 @router.delete("/chat/{session_id}", dependencies=[Depends(verify_api_key)])

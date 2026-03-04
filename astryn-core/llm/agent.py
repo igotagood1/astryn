@@ -30,7 +30,9 @@ def _looks_like_failed_tool_call(content: str) -> bool:
         return False
     try:
         data = json.loads(content)
-        return isinstance(data, dict) and "name" in data and "arguments" in data
+        return isinstance(data, dict) and "name" in data and (
+            "arguments" in data or "parameters" in data
+        )
     except json.JSONDecodeError:
         return False
 
@@ -63,44 +65,12 @@ class AgentResult:
     If `pending` is set, the loop is paused and the caller should present
     the confirmation to the user before calling resume_agent().
     If `pending` is None, `reply` contains the agent's final answer.
-    If `projects` is set, list_projects was called and the client should
-    render them as selectable buttons rather than plain text.
     """
 
     reply: str
     model: str
     messages: list[dict]
     pending: PendingConfirmation | None = None
-    projects: list[str] | None = None
-
-
-def _extract_projects(messages: list[dict], history_len: int) -> list[str] | None:
-    """Return project names if list_projects was called in the *current* agent turn.
-
-    Only scans messages added during this run_agent call (after history_len) so
-    that a list_projects call from a previous conversation turn doesn't keep
-    triggering project buttons on every subsequent reply.
-    """
-    current_turn = messages[history_len:]
-
-    list_projects_ids: set[str] = set()
-    for msg in current_turn:
-        if msg.get("role") == "assistant":
-            for tc in msg.get("tool_calls") or []:
-                if tc.get("function", {}).get("name") == "list_projects":
-                    list_projects_ids.add(tc.get("id", ""))
-
-    if not list_projects_ids:
-        return None
-
-    for msg in current_turn:
-        if msg.get("role") == "tool" and msg.get("tool_call_id") in list_projects_ids:
-            lines = msg.get("content", "").splitlines()
-            projects = [line[2:].strip() for line in lines if line.startswith("- ")]
-            if projects:
-                return projects
-
-    return None
 
 
 async def run_agent(
@@ -109,18 +79,22 @@ async def run_agent(
     system: str,
     session_id: str,
     session_state: SessionState,
+    tools: list[dict] | None = None,
 ) -> AgentResult:
     """Run the agentic tool loop.
 
     Calls the LLM repeatedly, executing safe tool calls immediately and
     pausing on any tool that requires user confirmation. Returns either a
     final reply or a paused AgentResult with a PendingConfirmation.
+
+    Pass an empty tools list to force a plain conversational response with no
+    tool calls available — used when no project is selected.
     """
-    history_len = len(messages)  # mark where this turn's new messages begin
+    effective_tools = tools if tools is not None else TOOLS
 
     for iteration in range(MAX_ITERATIONS):
         logger.debug("Agent iteration %d: session=%s", iteration + 1, session_id)
-        response = await provider.chat(messages, system, tools=TOOLS)
+        response = await provider.chat(messages, system, tools=effective_tools)
         messages = [*messages, response.to_message()]
 
         if not response.tool_calls:
@@ -131,12 +105,7 @@ async def run_agent(
                     model=response.model,
                     messages=messages,
                 )
-            return AgentResult(
-                reply=response.content,
-                model=response.model,
-                messages=messages,
-                projects=_extract_projects(messages, history_len),
-            )
+            return AgentResult(reply=response.content, model=response.model, messages=messages)
 
         outcome = await _process_tool_calls(
             tool_calls=response.tool_calls,

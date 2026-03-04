@@ -4,8 +4,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import config
-from core_client import confirm_tool, send_message, set_model
-from handlers.message import _send_result
+from core_client import confirm_tool, set_model, set_project_direct
+from handlers.message import _send_result  # used by handle_confirmation
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +61,13 @@ async def handle_project_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     session_id = str(update.effective_user.id)
 
     await query.edit_message_reply_markup(reply_markup=None)
-    await query.message.reply_text(f"Setting project to *{project_name}*...", parse_mode="Markdown")
 
     try:
-        result = await send_message(f"Set project to: {project_name}", session_id)
-        await _send_result(query.message, result)
+        await set_project_direct(project_name, session_id)
+        await query.message.reply_text(
+            f"Active project: *{project_name}*\n\nWhat would you like to do?",
+            parse_mode="Markdown",
+        )
     except Exception as e:
         logger.error("Error selecting project %s: %s", project_name, e)
         await query.message.reply_text(f"❌ Error: {e}")
