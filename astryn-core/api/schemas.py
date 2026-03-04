@@ -1,4 +1,6 @@
-from pydantic import BaseModel
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field
 
 
 class ChatRequest(BaseModel):
@@ -8,28 +10,43 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
 
 
-class ConfirmationInfo(BaseModel):
-    """Details of a pending tool confirmation returned to the client.
+# ── Action payloads ───────────────────────────────────────────────────────────
+# Each action type the agent can return is its own class with a `type` literal.
+# Adding a new interactive response means adding a new class here — ChatResponse
+# never needs to change.
 
-    Sent when the agent pauses and needs the user to approve or reject
-    a write or exec tool call before it can continue.
-    """
 
+class ConfirmationAction(BaseModel):
+    """Agent is paused, waiting for the user to approve or reject a tool call."""
+
+    type: Literal["confirmation"]
     id: str
     preview: str
+
+
+class ProjectSelectAction(BaseModel):
+    """Agent called list_projects — client should render these as selectable buttons."""
+
+    type: Literal["project_select"]
+    projects: list[str]
+
+
+Action = Annotated[
+    ConfirmationAction | ProjectSelectAction,
+    Field(discriminator="type"),
+]
 
 
 class ChatResponse(BaseModel):
     """Response from the /chat or /confirm endpoints.
 
-    If `confirmation` is present, the agent is paused and the client
-    should present the user with an approve/reject prompt.
-    If `confirmation` is None, `reply` contains the agent's final answer.
+    `action` carries any structured UI payload the client needs to render.
+    If None, `reply` is a plain text final answer with nothing else to do.
     """
 
     reply: str
     model: str
-    confirmation: ConfirmationInfo | None = None
+    action: Action | None = None
 
 
 class ConfirmRequest(BaseModel):

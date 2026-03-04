@@ -52,8 +52,8 @@ REGISTRY: dict[str, ToolDef] = {
             "function": {
                 "name": "list_projects",
                 "description": (
-                    "List all projects in ~/repos. "
-                    "Call this at the start of a session to let the user choose a project."
+                    "List all projects (top-level directories) in ~/repos. "
+                    "Only call this when the user explicitly asks to see their projects or choose one."
                 ),
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
