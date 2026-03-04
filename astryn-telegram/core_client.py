@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 CORE_URL = os.getenv("ASTRYN_CORE_URL", "http://localhost:8000")
-API_KEY = os.getenv("ASTRYN_CORE_API_KEY", "dev-key")
+API_KEY = os.getenv("ASTRYN_CORE_API_KEY")
+if not API_KEY:
+    raise RuntimeError("ASTRYN_CORE_API_KEY environment variable is not set")
 
 
 async def send_message(message: str, session_id: str) -> dict:

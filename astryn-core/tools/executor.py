@@ -1,6 +1,8 @@
 import os
+import shlex
 import subprocess
 from pathlib import Path
+
 from tools.safety import validate_path, validate_command, REPOS_ROOT, SecurityError
 
 NOISE_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".git", "dist", "build", ".eggs"}
@@ -102,8 +104,8 @@ async def run_command(command: str, active_project: str | None = None) -> str:
 
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            shlex.split(command),
+            shell=False,
             cwd=cwd,
             capture_output=True,
             text=True,

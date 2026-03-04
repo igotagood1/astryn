@@ -86,7 +86,7 @@ def validate_command(command: str) -> tuple[bool, str]:
         allowed_args = IMMEDIATE_COMMANDS[base_cmd]
         if allowed_args is None:
             return False, "immediate"  # all args allowed
-        if any(args_str.startswith(a) for a in allowed_args):
+        if any(args_str == a or args_str.startswith(a + " ") for a in allowed_args):
             return False, "immediate"
 
     # Check confirmation whitelist
@@ -94,7 +94,7 @@ def validate_command(command: str) -> tuple[bool, str]:
         allowed_args = CONFIRMATION_COMMANDS[base_cmd]
         if allowed_args is None:
             return True, "confirmation"
-        if any(args_str.startswith(a) for a in allowed_args):
+        if any(args_str == a or args_str.startswith(a + " ") for a in allowed_args):
             return True, "confirmation"
 
     raise SecurityError(
