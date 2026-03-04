@@ -17,6 +17,25 @@ if TYPE_CHECKING:
     from llm.agent import PendingConfirmation
 
 
+VERBOSITY_OPTIONS = ("concise", "balanced", "detailed")
+TONE_OPTIONS = ("casual", "professional")
+CODE_EXPLANATION_OPTIONS = ("minimal", "explain", "teach")
+
+
+@dataclass
+class CommunicationPreferences:
+    """User-configurable communication style preferences.
+
+    Persisted to the communication_preferences table via db/repository.py.
+    Injected into the coordinator system prompt as a formatted block.
+    """
+
+    verbosity: str = "balanced"
+    tone: str = "casual"
+    code_explanation: str = "explain"
+    proactive_suggestions: bool = True
+
+
 @dataclass
 class SessionState:
     """Mutable per-session state passed through the agent loop.

@@ -10,7 +10,14 @@ from telegram.ext import ContextTypes
 
 import config
 from core_client import CoreError, send_message
-from handlers.commands import cmd_clear, cmd_help, cmd_model, cmd_projects, cmd_status
+from handlers.commands import (
+    cmd_clear,
+    cmd_help,
+    cmd_model,
+    cmd_preferences,
+    cmd_projects,
+    cmd_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +31,8 @@ _COMMAND_MAP = {
     "models": cmd_model,
     "projects": cmd_projects,
     "project": cmd_projects,
+    "preferences": cmd_preferences,
+    "prefs": cmd_preferences,
 }
 
 

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from tools.models import (
     ApplyDiff,
+    Delegate,
     GrepFiles,
     ListFiles,
     ListProjects,
@@ -121,11 +122,15 @@ REGISTRY: dict[str, ToolDef] = {
     "grep_files": ToolDef(
         schema=_schema_from_model("grep_files", GrepFiles),
     ),
+    "delegate": ToolDef(
+        schema=_schema_from_model("delegate", Delegate),
+    ),
 }
 
-# The list of tool schemas passed to the LLM on every request.
-# Derived directly from REGISTRY so it never drifts out of sync.
-TOOLS: list[dict] = [t.schema for t in REGISTRY.values()]
+# The list of tool schemas for specialist agents (all tools except delegate).
+# Delegate is coordinator-only and should never be available to specialists.
+_SPECIALIST_EXCLUDED = {"delegate"}
+TOOLS: list[dict] = [t.schema for name, t in REGISTRY.items() if name not in _SPECIALIST_EXCLUDED]
 
 # Minimal tool set for sessions with no active project.
 # The user can still list and select projects; file/code tools
@@ -133,4 +138,20 @@ TOOLS: list[dict] = [t.schema for t in REGISTRY.values()]
 _NO_PROJECT_TOOL_NAMES = {"list_projects", "set_project"}
 NO_PROJECT_TOOLS: list[dict] = [
     t.schema for name, t in REGISTRY.items() if name in _NO_PROJECT_TOOL_NAMES
+]
+
+# Coordinator only sees the delegate tool — it cannot call file/code tools directly.
+COORDINATOR_TOOLS: list[dict] = [REGISTRY["delegate"].schema]
+
+# Read-only tools for explore and plan specialists.
+_READ_ONLY_TOOL_NAMES = {
+    "list_projects",
+    "set_project",
+    "list_files",
+    "read_file",
+    "search_files",
+    "grep_files",
+}
+READ_ONLY_TOOLS: list[dict] = [
+    t.schema for name, t in REGISTRY.items() if name in _READ_ONLY_TOOL_NAMES
 ]

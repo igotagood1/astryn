@@ -3,7 +3,14 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from core_client import CoreError, clear_session, get_projects, health_check, list_models
+from core_client import (
+    CoreError,
+    clear_session,
+    get_preferences,
+    get_projects,
+    health_check,
+    list_models,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +22,8 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "/projects — Pick a project to work on\n"
         "/clear — Reset conversation history\n"
         "/status — Check if Ollama is running\n"
-        "/model — Show and switch models",
+        "/model — Show and switch models\n"
+        "/preferences — Communication style settings",
         parse_mode="Markdown",
     )
 
@@ -91,6 +99,47 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"Active: `{active}`\n\nTap to switch:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+_PREF_LABELS = {
+    "verbosity": "Verbosity",
+    "tone": "Tone",
+    "code_explanation": "Code explanations",
+    "proactive_suggestions": "Proactive suggestions",
+}
+
+_PREF_OPTIONS = {
+    "verbosity": ["concise", "balanced", "detailed"],
+    "tone": ["casual", "professional"],
+    "code_explanation": ["minimal", "explain", "teach"],
+    "proactive_suggestions": ["true", "false"],
+}
+
+
+async def cmd_preferences(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    session_id = str(update.effective_user.id)
+    try:
+        prefs = await get_preferences(session_id)
+    except CoreError as e:
+        await update.message.reply_text(f"❌ {e}")
+        return
+    except Exception as e:
+        logger.error("Error fetching preferences: %s", e)
+        await update.message.reply_text("❌ Something went wrong. Please try again.")
+        return
+
+    buttons = []
+    for field, label in _PREF_LABELS.items():
+        current = str(prefs[field]).lower()
+        buttons.append(
+            [InlineKeyboardButton(f"{label}: {current}", callback_data=f"pref_menu:{field}")]
+        )
+
+    await update.message.reply_text(
+        "*Communication Preferences*\n\nTap a setting to change it:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(buttons),
     )

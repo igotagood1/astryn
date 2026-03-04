@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import db.repository as repo
 from llm.config import settings
+from prompts.coordinator import COORDINATOR_PROMPT_TEMPLATE
 from prompts.system import SYSTEM_PROMPT
-from store.domain import SessionState, pending_confirmations
+from services.preferences import format_preferences_block
+from store.domain import CommunicationPreferences, SessionState, pending_confirmations
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,45 @@ def _is_stale(state: SessionState) -> bool:
     if last.tzinfo is None:
         last = last.replace(tzinfo=UTC)
     return (now - last) > _STALE_SESSION_THRESHOLD
+
+
+def build_coordinator_prompt(
+    state: SessionState,
+    prefs: CommunicationPreferences | None = None,
+) -> str:
+    """Assemble the coordinator system prompt with preferences and session state."""
+    if prefs is None:
+        prefs = CommunicationPreferences()
+
+    preferences_block = format_preferences_block(prefs)
+    session_state_block = _build_session_state_block(state)
+
+    return COORDINATOR_PROMPT_TEMPLATE.format(
+        preferences_block=preferences_block,
+        session_state_block=session_state_block,
+    )
+
+
+def _build_session_state_block(state: SessionState) -> str:
+    """Build the session state section for prompt injection."""
+    if state.active_project:
+        stale_note = ""
+        if _is_stale(state):
+            stale_note = (
+                " (set from a previous conversation — if the user seems to be "
+                "asking about something unrelated, ask if they want to switch)"
+            )
+        return (
+            f"## Current Session State\n\n"
+            f"Active project: {state.active_project}{stale_note}\n"
+            f"The specialist agents have full access to this project's files."
+        )
+    return (
+        "## Current Session State\n\n"
+        "No project is selected yet. When delegating, the specialist can use "
+        "list_projects and set_project to find and select a project.\n"
+        "If the user mentions a project by name, include it in the delegation context."
+    )
 
 
 def build_system_prompt(state: SessionState) -> str:

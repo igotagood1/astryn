@@ -6,7 +6,8 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import config
-from core_client import CoreError, confirm_tool, set_model, set_project_direct
+from core_client import CoreError, confirm_tool, set_model, set_project_direct, update_preference
+from handlers.commands import _PREF_LABELS, _PREF_OPTIONS
 from handlers.message import _send_result  # used by handle_confirmation
 
 logger = logging.getLogger(__name__)
@@ -94,4 +95,61 @@ async def handle_model_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"❌ {e}")
     except Exception as e:
         logger.error("Error switching model to %s: %s", model_name, e)
+        await query.edit_message_text("❌ Something went wrong. Please try again.")
+
+
+async def handle_pref_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Show options for a specific preference field."""
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != config.ALLOWED_USER_ID:
+        return
+
+    # callback_data format: "pref_menu:<field>"
+    field = query.data[len("pref_menu:") :]
+    label = _PREF_LABELS.get(field, field)
+    options = _PREF_OPTIONS.get(field, [])
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    buttons = [
+        [InlineKeyboardButton(opt, callback_data=f"pref_set:{field}:{opt}")] for opt in options
+    ]
+
+    await query.edit_message_text(
+        f"*{label}*\n\nChoose a value:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def handle_pref_set(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Apply a preference value and confirm."""
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != config.ALLOWED_USER_ID:
+        return
+
+    # callback_data format: "pref_set:<field>:<value>"
+    parts = query.data.split(":", 2)
+    if len(parts) != 3:
+        return
+    _, field, value = parts
+    session_id = str(update.effective_user.id)
+
+    # Convert "true"/"false" strings for boolean field
+    actual_value: str | bool = value
+    if field == "proactive_suggestions":
+        actual_value = value == "true"
+
+    try:
+        await update_preference(session_id, field, actual_value)
+        label = _PREF_LABELS.get(field, field)
+        await query.edit_message_text(f"✅ {label} set to *{value}*", parse_mode="Markdown")
+    except CoreError as e:
+        await query.edit_message_text(f"❌ {e}")
+    except Exception as e:
+        logger.error("Error updating preference %s=%s: %s", field, value, e)
         await query.edit_message_text("❌ Something went wrong. Please try again.")

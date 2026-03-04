@@ -96,6 +96,30 @@ class GrepFiles(BaseModel):
     )
 
 
+class Delegate(BaseModel):
+    """Delegate a task to a specialist agent.
+
+    Use this when the user's request requires file access, code changes,
+    or deep exploration. The specialist runs with its own tools and context,
+    then returns its result to you for formatting.
+    """
+
+    specialist: str = Field(
+        min_length=1,
+        description=(
+            "Which specialist to delegate to: "
+            "'code' (read/write files, run commands), "
+            "'explore' (read-only file browsing and search), "
+            "'plan' (read-only analysis, devil's advocate review)"
+        ),
+    )
+    task: str = Field(min_length=1, description="Clear task description for the specialist")
+    context: str = Field(
+        default="",
+        description="Relevant file paths, error messages, or constraints from the conversation",
+    )
+
+
 type AnyTool = (
     ListProjects
     | SetProject
@@ -106,6 +130,7 @@ type AnyTool = (
     | RunCommand
     | SearchFiles
     | GrepFiles
+    | Delegate
 )
 
 
@@ -134,5 +159,7 @@ def parse_tool(name: str, args: dict) -> AnyTool:
             return SearchFiles.model_validate(args)
         case "grep_files":
             return GrepFiles.model_validate(args)
+        case "delegate":
+            return Delegate.model_validate(args)
         case _:
             raise ValueError(f"Unknown tool: {name!r}")

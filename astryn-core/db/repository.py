@@ -17,12 +17,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
+    CommunicationPreferencesModel,
     MessageModel,
     SessionModel,
     SessionStateModel,
     ToolAuditModel,
 )
-from store.domain import SessionState
+from store.domain import CommunicationPreferences, SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,53 @@ async def update_state(db: AsyncSession, external_id: str, state: SessionState) 
         db.add(state_row)
 
     state_row.active_project = state.active_project
+    await db.flush()
+
+
+# ── Preferences operations ───────────────────────────────────────────────────
+
+
+async def get_preferences(db: AsyncSession, external_id: str) -> CommunicationPreferences:
+    """Load communication preferences for a session, returning defaults if none exist."""
+    session = await _resolve_session(db, external_id)
+    result = await db.execute(
+        select(CommunicationPreferencesModel).where(
+            CommunicationPreferencesModel.session_id == session.id
+        )
+    )
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        return CommunicationPreferences()
+
+    return CommunicationPreferences(
+        verbosity=row.verbosity,
+        tone=row.tone,
+        code_explanation=row.code_explanation,
+        proactive_suggestions=row.proactive_suggestions,
+    )
+
+
+async def update_preferences(
+    db: AsyncSession, external_id: str, prefs: CommunicationPreferences
+) -> None:
+    """Persist communication preferences for a session."""
+    session = await _resolve_session(db, external_id)
+    result = await db.execute(
+        select(CommunicationPreferencesModel).where(
+            CommunicationPreferencesModel.session_id == session.id
+        )
+    )
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        row = CommunicationPreferencesModel(session_id=session.id)
+        db.add(row)
+
+    row.verbosity = prefs.verbosity
+    row.tone = prefs.tone
+    row.code_explanation = prefs.code_explanation
+    row.proactive_suggestions = prefs.proactive_suggestions
     await db.flush()
 
 

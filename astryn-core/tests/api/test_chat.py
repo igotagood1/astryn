@@ -1,9 +1,33 @@
 """Tests for POST /chat and DELETE /chat/{session_id}."""
 
+from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
 from llm.agent import AgentResult, PendingConfirmation
-from store.domain import SessionState
+from store.domain import CommunicationPreferences, SessionState
+from tools.registry import COORDINATOR_TOOLS
+
+
+def _standard_patches(mock_provider, agent_result):
+    """Context managers for the standard set of patches needed for chat tests."""
+    return [
+        patch("api.routes.chat.get_provider", return_value=mock_provider),
+        patch("api.routes.chat.run_agent", new_callable=AsyncMock, return_value=agent_result),
+        patch(
+            "services.session.ensure_session",
+            new_callable=AsyncMock,
+            return_value=SessionState(),
+        ),
+        patch("services.session.add_user_message", new_callable=AsyncMock),
+        patch("services.session.get_history_for_llm", new_callable=AsyncMock, return_value=[]),
+        patch("services.session.persist_agent_messages", new_callable=AsyncMock),
+        patch("services.session.update_state", new_callable=AsyncMock),
+        patch(
+            "services.preferences.get_preferences",
+            new_callable=AsyncMock,
+            return_value=CommunicationPreferences(),
+        ),
+    ]
 
 
 class TestChatEndpoint:
@@ -29,19 +53,9 @@ class TestChatEndpoint:
             ],
         )
 
-        with (
-            patch("api.routes.chat.get_provider", return_value=mock_provider),
-            patch("api.routes.chat.run_agent", new_callable=AsyncMock, return_value=agent_result),
-            patch(
-                "services.session.ensure_session",
-                new_callable=AsyncMock,
-                return_value=SessionState(),
-            ),
-            patch("services.session.add_user_message", new_callable=AsyncMock),
-            patch("services.session.get_history_for_llm", new_callable=AsyncMock, return_value=[]),
-            patch("services.session.persist_agent_messages", new_callable=AsyncMock),
-            patch("services.session.update_state", new_callable=AsyncMock),
-        ):
+        with ExitStack() as stack:
+            for cm in _standard_patches(mock_provider, agent_result):
+                stack.enter_context(cm)
             resp = await client.post(
                 "/chat",
                 json={"message": "hello"},
@@ -73,19 +87,9 @@ class TestChatEndpoint:
             pending=pending,
         )
 
-        with (
-            patch("api.routes.chat.get_provider", return_value=mock_provider),
-            patch("api.routes.chat.run_agent", new_callable=AsyncMock, return_value=agent_result),
-            patch(
-                "services.session.ensure_session",
-                new_callable=AsyncMock,
-                return_value=SessionState(),
-            ),
-            patch("services.session.add_user_message", new_callable=AsyncMock),
-            patch("services.session.get_history_for_llm", new_callable=AsyncMock, return_value=[]),
-            patch("services.session.persist_agent_messages", new_callable=AsyncMock),
-            patch("services.session.update_state", new_callable=AsyncMock),
-        ):
+        with ExitStack() as stack:
+            for cm in _standard_patches(mock_provider, agent_result):
+                stack.enter_context(cm)
             resp = await client.post(
                 "/chat",
                 json={"message": "write a file"},
@@ -129,3 +133,80 @@ class TestChatEndpoint:
     async def test_delete_requires_auth(self, client):
         resp = await client.delete("/chat/test-session")
         assert resp.status_code == 422
+
+    async def test_chat_uses_coordinator_tools(self, client, auth_headers, mock_provider):
+        """Verify that run_agent is called with COORDINATOR_TOOLS."""
+        agent_result = AgentResult(
+            reply="Hi there",
+            model="ollama/test-model",
+            messages=[],
+        )
+
+        mock_run_agent = AsyncMock(return_value=agent_result)
+
+        with (
+            patch("api.routes.chat.get_provider", return_value=mock_provider),
+            patch("api.routes.chat.run_agent", mock_run_agent),
+            patch(
+                "services.session.ensure_session",
+                new_callable=AsyncMock,
+                return_value=SessionState(),
+            ),
+            patch("services.session.add_user_message", new_callable=AsyncMock),
+            patch("services.session.get_history_for_llm", new_callable=AsyncMock, return_value=[]),
+            patch("services.session.persist_agent_messages", new_callable=AsyncMock),
+            patch("services.session.update_state", new_callable=AsyncMock),
+            patch(
+                "services.preferences.get_preferences",
+                new_callable=AsyncMock,
+                return_value=CommunicationPreferences(),
+            ),
+        ):
+            await client.post(
+                "/chat",
+                json={"message": "hello"},
+                headers=auth_headers,
+            )
+
+        call_kwargs = mock_run_agent.call_args
+        assert call_kwargs.kwargs.get("tools") is COORDINATOR_TOOLS
+
+    async def test_chat_uses_coordinator_prompt(self, client, auth_headers, mock_provider):
+        """Verify that run_agent is called with coordinator prompt (not system.md)."""
+        agent_result = AgentResult(
+            reply="Hi there",
+            model="ollama/test-model",
+            messages=[],
+        )
+
+        mock_run_agent = AsyncMock(return_value=agent_result)
+
+        with (
+            patch("api.routes.chat.get_provider", return_value=mock_provider),
+            patch("api.routes.chat.run_agent", mock_run_agent),
+            patch(
+                "services.session.ensure_session",
+                new_callable=AsyncMock,
+                return_value=SessionState(),
+            ),
+            patch("services.session.add_user_message", new_callable=AsyncMock),
+            patch("services.session.get_history_for_llm", new_callable=AsyncMock, return_value=[]),
+            patch("services.session.persist_agent_messages", new_callable=AsyncMock),
+            patch("services.session.update_state", new_callable=AsyncMock),
+            patch(
+                "services.preferences.get_preferences",
+                new_callable=AsyncMock,
+                return_value=CommunicationPreferences(),
+            ),
+        ):
+            await client.post(
+                "/chat",
+                json={"message": "hello"},
+                headers=auth_headers,
+            )
+
+        call_kwargs = mock_run_agent.call_args
+        system_prompt = call_kwargs.kwargs.get("system") or call_kwargs.args[2]
+        # Coordinator prompt should contain delegation instructions
+        assert "delegate" in system_prompt.lower()
+        assert "specialist" in system_prompt.lower()

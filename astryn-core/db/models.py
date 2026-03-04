@@ -39,6 +39,9 @@ class SessionModel(Base):
     tool_audits: Mapped[list["ToolAuditModel"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    preferences: Mapped["CommunicationPreferencesModel"] = relationship(
+        back_populates="session", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class MessageModel(Base):
@@ -83,3 +86,18 @@ class ToolAuditModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     session: Mapped["SessionModel"] = relationship(back_populates="tool_audits")
+
+
+class CommunicationPreferencesModel(Base):
+    __tablename__ = "communication_preferences"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("sessions.id", ondelete="CASCADE"), unique=True
+    )
+    verbosity: Mapped[str] = mapped_column(default="balanced")
+    tone: Mapped[str] = mapped_column(default="casual")
+    code_explanation: Mapped[str] = mapped_column(default="explain")
+    proactive_suggestions: Mapped[bool] = mapped_column(default=True)
+
+    session: Mapped["SessionModel"] = relationship(back_populates="preferences")

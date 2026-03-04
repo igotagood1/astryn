@@ -40,7 +40,7 @@ Always do this before committing — if a package is imported but missing from `
 | Phase | Focus | Status |
 |-------|-------|--------|
 | 1 | Chat via Telegram + Ollama | ✅ Complete |
-| 2 | Tool use — file r/w, shell, project scoping, model switching | 🔲 Next |
+| 2 | Tool use, coordinator/specialist architecture, communication preferences | ✅ Complete |
 | 3 | SQLite persistence, launchd services, Anthropic fallback | 🔲 Planned |
 | 4 | Cloudflare Tunnel, webhooks, GitHub integration, Draft & Compose | 🔲 Planned |
 | 5+ | MCP servers, persistent memory, Android app | 🔲 Future |
@@ -49,32 +49,44 @@ Always do this before committing — if a package is imported but missing from `
 
 ### astryn-core
 - `api/main.py` — FastAPI app, mounts routers
-- `api/routes/chat.py` — `POST /chat`, `DELETE /chat/{session_id}`; runs agentic loop (Phase 2+), in-memory sessions (Phase 1)
+- `api/routes/chat.py` — `POST /chat` (coordinator mode), `DELETE /chat/{session_id}`
+- `api/routes/preferences.py` — `GET/POST /preferences/{session_id}` for communication style
 - `api/routes/health.py` — `GET /health`, pings Ollama
-- `api/routes/models.py` — `GET /models`, `POST /models/active` (Phase 2+)
+- `api/routes/models.py` — `GET /models`, `POST /models/active`
 - `llm/base.py` — `LLMProvider` ABC and `LLMResponse` dataclass
-- `llm/providers/ollama.py` — `OllamaProvider`, calls Ollama's `/api/chat`; supports tool_calls (Phase 2+)
+- `llm/providers/ollama.py` — `OllamaProvider`, calls Ollama's `/api/chat`; supports tool_calls
 - `llm/router.py` — provider factory, active model state, fallback chain (Phase 3+)
-- `llm/agent.py` — agentic loop: executes tool calls, handles confirmation pause/resume (Phase 2+)
+- `llm/agent.py` — coordinator/specialist agent loop: `run_agent()`, `resume_agent()`, `_run_specialist()`, `_resume_coordinator()`
+- `llm/specialists.py` — `SpecialistDef` dataclass, `SPECIALISTS` registry (code, explore, plan)
 - `llm/config.py` — `AstrynSettings` via pydantic-settings
-- `tools/safety.py` — path validation (scoped to `~/repos`), shell command whitelist (Phase 2+)
-- `tools/definitions.py` — tool JSON schemas passed to LLM (Phase 2+)
-- `tools/executor.py` — tool execution functions (Phase 2+)
-- `db/` — SQLite via aiosqlite: sessions, session state, pending confirmations (Phase 3+)
+- `tools/registry.py` — `REGISTRY`, `TOOLS`, `NO_PROJECT_TOOLS`, `COORDINATOR_TOOLS`, `READ_ONLY_TOOLS`
+- `tools/models.py` — Pydantic models for all tools including `Delegate`
+- `tools/executor.py` — tool execution functions
+- `tools/safety.py` — path validation (scoped to `~/repos`), shell command whitelist
+- `prompts/coordinator.md` — coordinator system prompt template with `{preferences_block}` and `{session_state_block}`
+- `prompts/specialists/{code,explore,plan}.md` — specialist prompts
+- `services/session.py` — `build_coordinator_prompt()`, session management
+- `services/preferences.py` — `validate_preference()`, `format_preferences_block()`
+- `store/domain.py` — `SessionState`, `CommunicationPreferences`, `pending_confirmations`
+- `db/` — Postgres via asyncpg: sessions, session state, communication preferences, tool audit
 
 ### astryn-telegram
-- `bot.py` — entry point; registers handlers including `CallbackQueryHandler` (Phase 2+)
+- `bot.py` — entry point; registers handlers including confirmation, model, project, and preferences callbacks
 - `core_client.py` — async HTTP client for astryn-core
-- `handlers/message.py` — handles text messages; renders confirmation inline keyboards (Phase 2+)
-- `handlers/commands.py` — `/help`, `/clear`, `/status`, `/model`
-- `handlers/callbacks.py` — inline keyboard button handler for tool confirmations (Phase 2+)
+- `handlers/message.py` — handles text messages; renders confirmation inline keyboards
+- `handlers/commands.py` — `/help`, `/clear`, `/status`, `/model`, `/projects`, `/preferences`
+- `handlers/callbacks.py` — inline keyboard handlers for confirmations, model select, project select, preferences
 
 ### Key Design Decisions
+- **Coordinator/Specialist architecture**: coordinator agent handles conversation (1 LLM call for simple chat), delegates technical work to specialists via `delegate` tool
+- Specialists: `code` (full tools), `explore` (read-only), `plan` (read-only, devil's advocate)
+- Specialist messages are ephemeral — not persisted to DB. Coordinator history captures the full flow.
+- Confirmation nesting: specialist pauses → coordinator state saved on `PendingConfirmation` → resume resumes specialist then coordinator
+- Communication preferences: user-configurable (verbosity, tone, code_explanation, proactive_suggestions) persisted in DB, injected into coordinator prompt
 - All file/shell operations are scoped to `~/repos` — enforced in `tools/safety.py`
 - Write/exec tool calls require Telegram inline keyboard confirmation before executing
-- Active model is global state in `llm/router.py`; switched via `/model use <name>`
+- Active model is global state in `llm/router.py`; switched via `/model`
 - Adding a new LLM provider: implement `LLMProvider` in `llm/providers/`, add a `case` to `router.py`
-- The coworker system prompt (challenge, alternatives, confirm before acting) lives in `api/routes/chat.py`
 
 ## Branching Rules
 
@@ -86,7 +98,7 @@ Always do this before committing — if a package is imported but missing from `
 **Creating a new branch — always follow these steps in order:**
 1. `git fetch origin` — update remote refs
 2. `git pull origin main` — bring main up to date
-3. `git checkout -b <branch-name> origin/main` — branch from origin/main, not from wherever HEAD is
+3. `git checkout -b <branch-name> --no-track origin/main` — branch from origin/main without tracking it (avoids pushing to main by accident)
 
 ## Development Workflow (TDD with Agents)
 

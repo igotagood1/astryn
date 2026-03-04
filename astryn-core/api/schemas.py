@@ -49,3 +49,19 @@ class SetProjectRequest(BaseModel):
 
     name: str
     session_id: str = "default"
+
+
+class PreferencesResponse(BaseModel):
+    """Current communication preferences for a session."""
+
+    verbosity: str
+    tone: str
+    code_explanation: str
+    proactive_suggestions: bool
+
+
+class UpdatePreferenceRequest(BaseModel):
+    """Request to update a single communication preference."""
+
+    field: str
+    value: str | bool

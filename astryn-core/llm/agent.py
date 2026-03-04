@@ -9,7 +9,7 @@ import db.repository as repo
 from llm.base import LLMProvider
 from store.domain import SessionState
 from tools.executor import build_preview, execute_tool, requires_confirmation
-from tools.registry import NO_PROJECT_TOOLS, TOOLS
+from tools.registry import COORDINATOR_TOOLS, NO_PROJECT_TOOLS, TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,10 @@ class PendingConfirmation:
     messages: list[dict]
     remaining_tool_calls: list[dict] = field(default_factory=list)
     session_state: SessionState = field(default_factory=SessionState)
+    # Coordinator state for nested confirmation resume (delegation)
+    coordinator_messages: list[dict] | None = None
+    coordinator_system: str | None = None
+    delegate_tool_call_id: str | None = None
 
 
 @dataclass
@@ -133,9 +137,13 @@ async def resume_agent(
     """Resume the agent after the user approves or rejects a pending tool call."""
     if approved:
         logger.info("Executing approved tool: %s", pending.tool_name)
-        tool_result = await execute_tool(
-            pending.tool_name, pending.tool_args, pending.session_state
-        )
+        try:
+            tool_result = await execute_tool(
+                pending.tool_name, pending.tool_args, pending.session_state
+            )
+        except Exception as e:
+            logger.error("Approved tool execution failed: %s error=%s", pending.tool_name, e)
+            tool_result = f"Tool execution failed: {e}"
     else:
         logger.info("Tool rejected by user: %s", pending.tool_name)
         tool_result = "User rejected this action. Do not retry it."
@@ -166,16 +174,141 @@ async def resume_agent(
             db=db,
         )
         if isinstance(outcome, AgentResult):
+            # If another confirmation needed, preserve coordinator state
+            if outcome.pending and pending.coordinator_messages is not None:
+                outcome.pending.coordinator_messages = pending.coordinator_messages
+                outcome.pending.coordinator_system = pending.coordinator_system
+                outcome.pending.delegate_tool_call_id = pending.delegate_tool_call_id
             return outcome
         messages = outcome
 
-    return await run_agent(
+    # Continue the specialist loop to completion
+    specialist_result = await run_agent(
         provider=provider,
         messages=messages,
         system=pending.system,
         session_id=pending.session_id,
         session_state=pending.session_state,
         db=db,
+    )
+
+    # If specialist needs another confirmation, preserve coordinator state
+    if specialist_result.pending and pending.coordinator_messages is not None:
+        specialist_result.pending.coordinator_messages = pending.coordinator_messages
+        specialist_result.pending.coordinator_system = pending.coordinator_system
+        specialist_result.pending.delegate_tool_call_id = pending.delegate_tool_call_id
+        return specialist_result
+
+    # If this was a delegated confirmation, feed result back to coordinator
+    if pending.coordinator_messages is not None:
+        assert pending.coordinator_system is not None, (
+            "coordinator_system must be set for delegation"
+        )
+        assert pending.delegate_tool_call_id is not None, (
+            "delegate_tool_call_id must be set for delegation"
+        )
+        return await _resume_coordinator(
+            provider=provider,
+            specialist_reply=specialist_result.reply,
+            coordinator_messages=pending.coordinator_messages,
+            coordinator_system=pending.coordinator_system,
+            delegate_tool_call_id=pending.delegate_tool_call_id,
+            session_id=pending.session_id,
+            session_state=pending.session_state,
+            db=db,
+        )
+
+    return specialist_result
+
+
+async def _run_specialist(
+    specialist_name: str,
+    task: str,
+    context: str,
+    coordinator_messages: list[dict],
+    coordinator_system: str,
+    delegate_tool_call_id: str,
+    session_id: str,
+    session_state: SessionState,
+    provider: LLMProvider,
+    db: AsyncSession,
+) -> "AgentResult | str":
+    """Run a specialist sub-agent. Returns AgentResult if confirmation needed, else reply string."""
+    from llm.specialists import SPECIALISTS
+
+    spec = SPECIALISTS.get(specialist_name)
+    if spec is None:
+        available = ", ".join(SPECIALISTS.keys())
+        return f"Unknown specialist: {specialist_name!r}. Available: {available}"
+
+    # Build fresh messages for specialist
+    user_content = f"Task: {task}"
+    if context:
+        user_content += f"\n\nContext: {context}"
+    specialist_messages = [{"role": "user", "content": user_content}]
+
+    # Build specialist system prompt with session state
+    specialist_system = spec.system_prompt
+    if session_state.active_project:
+        specialist_system += f"\n\nActive project: {session_state.active_project}"
+
+    specialist_tools = spec.tools if session_state.active_project else NO_PROJECT_TOOLS
+
+    logger.info(
+        "Running specialist: %s session=%s task=%s",
+        specialist_name,
+        session_id,
+        task[:100],
+    )
+
+    result = await run_agent(
+        provider=provider,
+        messages=specialist_messages,
+        system=specialist_system,
+        session_id=session_id,
+        session_state=session_state,
+        db=db,
+        tools=specialist_tools,
+    )
+
+    # If specialist needs confirmation, attach coordinator state
+    if result.pending:
+        result.pending.coordinator_messages = coordinator_messages
+        result.pending.coordinator_system = coordinator_system
+        result.pending.delegate_tool_call_id = delegate_tool_call_id
+        return result
+
+    return result.reply
+
+
+async def _resume_coordinator(
+    provider: LLMProvider,
+    specialist_reply: str,
+    coordinator_messages: list[dict],
+    coordinator_system: str,
+    delegate_tool_call_id: str,
+    session_id: str,
+    session_state: SessionState,
+    db: AsyncSession,
+) -> AgentResult:
+    """Resume the coordinator after a specialist completes."""
+    messages = [
+        *coordinator_messages,
+        {
+            "role": "tool",
+            "tool_call_id": delegate_tool_call_id,
+            "content": specialist_reply,
+        },
+    ]
+
+    return await run_agent(
+        provider=provider,
+        messages=messages,
+        system=coordinator_system,
+        session_id=session_id,
+        session_state=session_state,
+        db=db,
+        tools=COORDINATOR_TOOLS,
     )
 
 
@@ -191,14 +324,67 @@ async def _process_tool_calls(
     """Process a batch of tool calls sequentially.
 
     Runs safe tools immediately. Pauses on tools that require confirmation.
+    Handles delegate tool by spinning up specialist sub-agents.
     Logs each execution to the tool_audit table.
     """
     for i, tool_call in enumerate(tool_calls):
         fn = tool_call.get("function", {})
         tool_name = fn.get("name", "")
         raw_args = fn.get("arguments", {})
-        tool_args = raw_args if isinstance(raw_args, dict) else json.loads(raw_args)
+        try:
+            tool_args = raw_args if isinstance(raw_args, dict) else json.loads(raw_args)
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.warning("Invalid tool arguments for %s: %s", tool_name, e)
+            tool_call_id = tool_call.get("id") or str(uuid.uuid4())
+            messages = [
+                *messages,
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": f"Invalid arguments: {e}",
+                },
+            ]
+            continue
         tool_call_id = tool_call.get("id") or str(uuid.uuid4())
+
+        # Handle delegate tool specially
+        if tool_name == "delegate":
+            specialist_name = tool_args.get("specialist", "")
+            logger.info(
+                "Coordinator delegating to specialist: %s session=%s",
+                specialist_name,
+                session_id,
+            )
+            outcome = await _run_specialist(
+                specialist_name=specialist_name,
+                task=tool_args.get("task", ""),
+                context=tool_args.get("context", ""),
+                coordinator_messages=messages,
+                coordinator_system=system,
+                delegate_tool_call_id=tool_call_id,
+                session_id=session_id,
+                session_state=session_state,
+                provider=provider,
+                db=db,
+            )
+
+            if isinstance(outcome, AgentResult):
+                # Specialist needs confirmation — bubble up
+                return outcome
+
+            # Specialist completed — log and feed reply as tool result
+            await repo.log_tool_call(
+                db=db,
+                external_id=session_id,
+                tool_name="delegate",
+                tool_args=tool_args,
+                result=outcome[:2000] if len(outcome) > 2000 else outcome,
+            )
+            messages = [
+                *messages,
+                {"role": "tool", "tool_call_id": tool_call_id, "content": outcome},
+            ]
+            continue
 
         if requires_confirmation(tool_name, tool_args):
             logger.info("Tool requires confirmation: %s session=%s", tool_name, session_id)

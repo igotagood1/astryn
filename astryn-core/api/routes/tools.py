@@ -37,7 +37,13 @@ async def confirm_tool(
     )
 
     provider = get_provider()
-    old_count = len(pending.messages)
+    # When resuming a delegated confirmation, result.messages will be coordinator
+    # messages (after _resume_coordinator), not specialist messages. Use the
+    # coordinator message count so persist_agent_messages diffs correctly.
+    if pending.coordinator_messages is not None:
+        old_count = len(pending.coordinator_messages)
+    else:
+        old_count = len(pending.messages)
 
     try:
         result = await resume_agent(provider=provider, pending=pending, approved=approved, db=db)

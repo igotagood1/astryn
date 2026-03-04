@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import services.preferences as preferences_service
 import services.session as session_service
 from api.deps import verify_api_key
 from api.schemas import ChatRequest, ChatResponse, ConfirmationAction
@@ -11,6 +12,7 @@ from db.engine import get_db
 from llm.agent import run_agent
 from llm.router import get_provider
 from store.domain import pending_confirmations
+from tools.registry import COORDINATOR_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +42,17 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
         history = await session_service.get_history_for_llm(db, req.session_id)
         old_count = len(history)
 
+        prefs = await preferences_service.get_preferences(db, req.session_id)
+        system = session_service.build_coordinator_prompt(state, prefs)
+
         result = await run_agent(
             provider=provider,
             messages=list(history),
-            system=session_service.build_system_prompt(state),
+            system=system,
             session_id=req.session_id,
             session_state=state,
             db=db,
+            tools=COORDINATOR_TOOLS,
         )
 
         await session_service.persist_agent_messages(db, req.session_id, old_count, result.messages)

@@ -10,6 +10,7 @@ from store.domain import SessionState
 from tools.models import (
     AnyTool,
     ApplyDiff,
+    Delegate,
     GrepFiles,
     ListFiles,
     ListProjects,
@@ -256,6 +257,8 @@ async def execute_tool(
                 return await search_files(pattern, path, active_project)
             case GrepFiles(pattern=pattern, include=include):
                 return await grep_files(pattern, include, active_project)
+            case Delegate():
+                return "delegate is handled by the agent loop, not the executor."
             case _:
                 return f"Unhandled tool type: {type(tool).__name__}"
     except SecurityError as e:

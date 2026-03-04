@@ -96,3 +96,24 @@ async def set_model(model: str) -> dict:
         )
         _raise_for_status(r)
         return r.json()
+
+
+async def get_preferences(session_id: str) -> dict:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(
+            f"{CORE_URL}/preferences/{session_id}",
+            headers={"X-Api-Key": API_KEY},
+        )
+        _raise_for_status(r)
+        return r.json()
+
+
+async def update_preference(session_id: str, field: str, value) -> dict:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.post(
+            f"{CORE_URL}/preferences/{session_id}",
+            json={"field": field, "value": value},
+            headers={"X-Api-Key": API_KEY},
+        )
+        _raise_for_status(r)
+        return r.json()
