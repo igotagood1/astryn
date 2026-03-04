@@ -38,6 +38,22 @@ def _trim(history: list[dict]) -> list[dict]:
     return history[-max_messages:] if len(history) > max_messages else history
 
 
+def _build_system(state: dict) -> str:
+    active_project = state.get("active_project")
+    if active_project:
+        return (
+            SYSTEM_PROMPT
+            + f"\n\n## Current Session State\n\n"
+            f"Active project: {active_project}\n"
+            f"Do NOT call list_projects or set_project again unless the user explicitly asks to change projects."
+        )
+    return (
+        SYSTEM_PROMPT
+        + "\n\n## Current Session State\n\n"
+        "No active project is set. Call list_projects() and ask the user to pick one before doing any file operations."
+    )
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     req: ChatRequest,
@@ -57,7 +73,7 @@ async def chat(
     result = await run_agent(
         provider=provider,
         messages=list(session.history),
-        system=SYSTEM_PROMPT,
+        system=_build_system(session.state),
         session_id=req.session_id,
         session_state=session.state,
     )

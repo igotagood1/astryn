@@ -8,6 +8,23 @@ from tools.executor import build_preview, execute_tool, requires_confirmation
 
 MAX_ITERATIONS = 10
 
+MODEL_TOOL_UNSUPPORTED_REPLY = (
+    "⚠️ This model doesn't support tool use — it described the action instead of executing it.\n\n"
+    "Use `/model` to switch to one that does. `llama3.1:8b` is a reliable choice."
+)
+
+
+def _looks_like_failed_tool_call(content: str) -> bool:
+    """Detect when a model outputs a tool call as plain text instead of using the tool API."""
+    content = content.strip()
+    if not content.startswith("{"):
+        return False
+    try:
+        data = json.loads(content)
+        return isinstance(data, dict) and "name" in data and "arguments" in data
+    except json.JSONDecodeError:
+        return False
+
 
 @dataclass
 class PendingConfirmation:
@@ -49,6 +66,12 @@ async def run_agent(
         messages = [*messages, response.to_message()]
 
         if not response.tool_calls:
+            if _looks_like_failed_tool_call(response.content):
+                return AgentResult(
+                    reply=MODEL_TOOL_UNSUPPORTED_REPLY,
+                    model=response.model,
+                    messages=messages,
+                )
             return AgentResult(reply=response.content, model=response.model, messages=messages)
 
         outcome = await _process_tool_calls(
