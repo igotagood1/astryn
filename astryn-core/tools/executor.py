@@ -125,28 +125,31 @@ async def execute_tool(
     """Dispatch a tool call. Returns string result."""
     active_project = session_state.get("active_project")
 
-    match tool_name:
-        case "list_projects":
-            return await list_projects()
-        case "set_project":
-            return await set_project(tool_args["name"], session_state)
-        case "list_files":
-            return await list_files(tool_args.get("path", "."), active_project)
-        case "read_file":
-            return await read_file(tool_args["path"], active_project)
-        case "apply_diff":
-            return await apply_diff(
-                tool_args["path"],
-                tool_args["old_str"],
-                tool_args["new_str"],
-                active_project,
-            )
-        case "write_file":
-            return await write_file(tool_args["path"], tool_args["content"], active_project)
-        case "run_command":
-            return await run_command(tool_args["command"], active_project)
-        case _:
-            return f"Unknown tool: {tool_name}"
+    try:
+        match tool_name:
+            case "list_projects":
+                return await list_projects()
+            case "set_project":
+                return await set_project(tool_args["name"], session_state)
+            case "list_files":
+                return await list_files(tool_args.get("path", "."), active_project)
+            case "read_file":
+                return await read_file(tool_args["path"], active_project)
+            case "apply_diff":
+                return await apply_diff(
+                    tool_args["path"],
+                    tool_args["old_str"],
+                    tool_args["new_str"],
+                    active_project,
+                )
+            case "write_file":
+                return await write_file(tool_args["path"], tool_args["content"], active_project)
+            case "run_command":
+                return await run_command(tool_args["command"], active_project)
+            case _:
+                return f"Unknown tool: {tool_name}"
+    except SecurityError as e:
+        return f"Security error: {e} Use a relative path within the active project."
 
 
 def requires_confirmation(tool_name: str, tool_args: dict) -> bool:

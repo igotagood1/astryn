@@ -42,7 +42,13 @@ async def _send_result(message: Message, result: dict):
                         "❌ Reject",
                         callback_data=f"confirm:{confirmation['id']}:reject",
                     ),
-                ]
+                ],
+                [
+                    InlineKeyboardButton(
+                        "💬 More context",
+                        callback_data=f"confirm:{confirmation['id']}:context",
+                    ),
+                ],
             ]
         )
         await _send_chunked(message, text, reply_markup=keyboard)
