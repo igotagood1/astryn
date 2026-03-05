@@ -98,6 +98,17 @@ async def set_model(model: str) -> dict:
         return r.json()
 
 
+async def pull_model(model: str) -> dict:
+    async with httpx.AsyncClient(timeout=600) as client:
+        r = await client.post(
+            f"{CORE_URL}/models/pull",
+            json={"model": model},
+            headers={"X-Api-Key": API_KEY},
+        )
+        _raise_for_status(r)
+        return r.json()
+
+
 async def get_preferences(session_id: str) -> dict:
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(

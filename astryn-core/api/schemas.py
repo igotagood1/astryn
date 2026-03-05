@@ -65,3 +65,9 @@ class UpdatePreferenceRequest(BaseModel):
 
     field: str
     value: str | bool
+
+
+class PullModelRequest(BaseModel):
+    """Request to pull a model from the Ollama registry."""
+
+    model: str

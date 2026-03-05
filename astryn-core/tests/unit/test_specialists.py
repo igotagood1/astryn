@@ -2,12 +2,21 @@
 
 from llm.specialists import SPECIALISTS, SpecialistDef
 from prompts.specialists.loader import CODE_PROMPT, EXPLORE_PROMPT, PLAN_PROMPT
-from tools.registry import COORDINATOR_TOOLS, READ_ONLY_TOOLS, TOOLS
+from tools.registry import COORDINATOR_TOOLS, READ_ONLY_TOOLS, READ_WRITE_TOOLS, TOOLS
 
 
 class TestSpecialistDefinitions:
-    def test_three_specialists_defined(self):
-        assert set(SPECIALISTS.keys()) == {"code", "explore", "plan"}
+    def test_all_specialists_defined(self):
+        expected = {
+            "code",
+            "explore",
+            "plan",
+            "code-review",
+            "design-review",
+            "security-review",
+            "test-writer",
+        }
+        assert set(SPECIALISTS.keys()) == expected
 
     def test_all_are_specialist_def(self):
         for spec in SPECIALISTS.values():
@@ -63,6 +72,24 @@ class TestToolSets:
         assert "apply_diff" in names
         assert "write_file" in names
         assert "run_command" in names
+
+    def test_read_write_includes_read_only(self):
+        ro_names = {t["function"]["name"] for t in READ_ONLY_TOOLS}
+        rw_names = {t["function"]["name"] for t in READ_WRITE_TOOLS}
+        assert ro_names.issubset(rw_names)
+
+    def test_read_write_includes_write_tools(self):
+        names = {t["function"]["name"] for t in READ_WRITE_TOOLS}
+        assert "write_file" in names
+        assert "apply_diff" in names
+
+    def test_read_write_excludes_run_command(self):
+        names = {t["function"]["name"] for t in READ_WRITE_TOOLS}
+        assert "run_command" not in names
+
+    def test_read_write_excludes_delegate(self):
+        names = {t["function"]["name"] for t in READ_WRITE_TOOLS}
+        assert "delegate" not in names
 
 
 class TestPromptFiles:

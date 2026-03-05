@@ -13,10 +13,12 @@ from telegram.ext import (
 import config
 from handlers.callbacks import (
     handle_confirmation,
+    handle_model_pull_prompt,
     handle_model_select,
     handle_pref_menu,
     handle_pref_set,
     handle_project_select,
+    handle_pull_command,
 )
 from handlers.commands import (
     cmd_clear,
@@ -66,8 +68,10 @@ def main():
     app.add_handler(CommandHandler("model", cmd_model))
     app.add_handler(CommandHandler("projects", cmd_projects))
     app.add_handler(CommandHandler("preferences", cmd_preferences))
+    app.add_handler(CommandHandler("pull", handle_pull_command))
     app.add_handler(CallbackQueryHandler(handle_confirmation, pattern=r"^confirm:"))
     app.add_handler(CallbackQueryHandler(handle_model_select, pattern=r"^model_select:"))
+    app.add_handler(CallbackQueryHandler(handle_model_pull_prompt, pattern=r"^model_pull_prompt$"))
     app.add_handler(CallbackQueryHandler(handle_project_select, pattern=r"^project:"))
     app.add_handler(CallbackQueryHandler(handle_pref_menu, pattern=r"^pref_menu:"))
     app.add_handler(CallbackQueryHandler(handle_pref_set, pattern=r"^pref_set:"))

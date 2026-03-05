@@ -155,3 +155,9 @@ _READ_ONLY_TOOL_NAMES = {
 READ_ONLY_TOOLS: list[dict] = [
     t.schema for name, t in REGISTRY.items() if name in _READ_ONLY_TOOL_NAMES
 ]
+
+# Read-write tools: read-only + write_file/apply_diff (no run_command).
+_READ_WRITE_TOOL_NAMES = _READ_ONLY_TOOL_NAMES | {"write_file", "apply_diff"}
+READ_WRITE_TOOLS: list[dict] = [
+    t.schema for name, t in REGISTRY.items() if name in _READ_WRITE_TOOL_NAMES
+]

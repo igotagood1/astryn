@@ -2,8 +2,9 @@
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Index, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Numeric, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -86,6 +87,19 @@ class ToolAuditModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     session: Mapped["SessionModel"] = relationship(back_populates="tool_audits")
+
+
+class ApiUsageModel(Base):
+    __tablename__ = "api_usage"
+    __table_args__ = (Index("ix_api_usage_created", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=_new_uuid)
+    model: Mapped[str]
+    input_tokens: Mapped[int]
+    output_tokens: Mapped[int]
+    estimated_cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 6))
+    session_id: Mapped[str | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class CommunicationPreferencesModel(Base):

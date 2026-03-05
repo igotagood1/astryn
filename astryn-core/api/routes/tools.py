@@ -9,7 +9,7 @@ from api.deps import verify_api_key
 from api.schemas import ChatResponse, ConfirmationAction, ConfirmRequest
 from db.engine import get_db
 from llm.agent import resume_agent
-from llm.router import get_provider
+from llm.router import get_coordinator_provider, get_specialist_provider
 from store.domain import pending_confirmations
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,9 @@ async def confirm_tool(
         "Confirmation %s: tool=%s action=%s", confirmation_id, pending.tool_name, req.action
     )
 
-    provider = get_provider()
+    specialist = get_specialist_provider()
+    coordinator = get_coordinator_provider()
+
     # When resuming a delegated confirmation, result.messages will be coordinator
     # messages (after _resume_coordinator), not specialist messages. Use the
     # coordinator message count so persist_agent_messages diffs correctly.
@@ -46,7 +48,13 @@ async def confirm_tool(
         old_count = len(pending.messages)
 
     try:
-        result = await resume_agent(provider=provider, pending=pending, approved=approved, db=db)
+        result = await resume_agent(
+            provider=specialist,
+            pending=pending,
+            approved=approved,
+            db=db,
+            coordinator_provider=coordinator,
+        )
 
         await session_service.persist_agent_messages(
             db, pending.session_id, old_count, result.messages

@@ -1,9 +1,13 @@
-"""Load specialist prompts at import time."""
+"""Load specialist prompts from SKILL.md files.
 
-from pathlib import Path
+Provides backward-compatible exports (CODE_PROMPT, EXPLORE_PROMPT, PLAN_PROMPT)
+by reading the body from the SKILL.md files in each skill subdirectory.
+"""
 
-_DIR = Path(__file__).parent
+from llm.skills import discover_skills
 
-CODE_PROMPT = (_DIR / "code.md").read_text()
-EXPLORE_PROMPT = (_DIR / "explore.md").read_text()
-PLAN_PROMPT = (_DIR / "plan.md").read_text()
+_skills = discover_skills()
+
+CODE_PROMPT = _skills["code"].system_prompt if "code" in _skills else ""
+EXPLORE_PROMPT = _skills["explore"].system_prompt if "explore" in _skills else ""
+PLAN_PROMPT = _skills["plan"].system_prompt if "plan" in _skills else ""

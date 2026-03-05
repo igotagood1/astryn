@@ -285,3 +285,40 @@ async def clear_session(db: AsyncSession, external_id: str) -> None:
 
     await db.flush()
     logger.info("Cleared session: external_id=%s", external_id)
+
+
+# ── API Usage ─────────────────────────────────────────────────────────────────
+
+
+async def record_api_usage(
+    db: AsyncSession,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    estimated_cost_usd,
+    session_id: str | None = None,
+) -> None:
+    """Record an Anthropic API usage entry. Fire-and-forget safe."""
+    from db.models import ApiUsageModel
+
+    row = ApiUsageModel(
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        estimated_cost_usd=estimated_cost_usd,
+        session_id=session_id,
+    )
+    db.add(row)
+    await db.flush()
+
+
+async def get_usage_since(db: AsyncSession, since: datetime) -> list:
+    """Return all API usage records created since the given datetime."""
+    from db.models import ApiUsageModel
+
+    result = await db.execute(
+        select(ApiUsageModel)
+        .where(ApiUsageModel.created_at >= since)
+        .order_by(ApiUsageModel.created_at)
+    )
+    return list(result.scalars().all())

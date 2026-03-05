@@ -6,7 +6,14 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 import config
-from core_client import CoreError, confirm_tool, set_model, set_project_direct, update_preference
+from core_client import (
+    CoreError,
+    confirm_tool,
+    pull_model,
+    set_model,
+    set_project_direct,
+    update_preference,
+)
 from handlers.commands import _PREF_LABELS, _PREF_OPTIONS
 from handlers.message import _send_result  # used by handle_confirmation
 
@@ -96,6 +103,47 @@ async def handle_model_select(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error("Error switching model to %s: %s", model_name, e)
         await query.edit_message_text("❌ Something went wrong. Please try again.")
+
+
+async def handle_model_pull_prompt(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Prompt the user to type a model name to pull."""
+    query = update.callback_query
+    await query.answer()
+
+    if update.effective_user.id != config.ALLOWED_USER_ID:
+        return
+
+    await query.edit_message_text(
+        "Type the model name to pull (e.g. `deepseek-r1:7b`).\n\n"
+        "Send it as: `/pull deepseek-r1:7b`",
+        parse_mode="Markdown",
+    )
+
+
+async def handle_pull_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Handle /pull <model> command to pull a model from Ollama registry."""
+    if update.effective_user.id != config.ALLOWED_USER_ID:
+        return
+
+    args = update.message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await update.message.reply_text("Usage: /pull <model-name>")
+        return
+
+    model_name = args[1].strip()
+    await update.message.reply_text(f"⬇️ Pulling `{model_name}`... this may take a while.")
+
+    try:
+        result = await pull_model(model_name)
+        await update.message.reply_text(
+            f"✅ Pulled `{model_name}` — {result.get('status', 'done')}",
+            parse_mode="Markdown",
+        )
+    except CoreError as e:
+        await update.message.reply_text(f"❌ {e}")
+    except Exception as e:
+        logger.error("Error pulling model %s: %s", model_name, e)
+        await update.message.reply_text("❌ Pull failed. Please try again.")
 
 
 async def handle_pref_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):

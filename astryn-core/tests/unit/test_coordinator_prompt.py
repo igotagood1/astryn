@@ -1,4 +1,4 @@
-"""Tests for coordinator prompt building with preferences and session state."""
+"""Tests for coordinator prompt building with preferences, skills, and session state."""
 
 from datetime import UTC, datetime, timedelta
 
@@ -42,6 +42,10 @@ class TestBuildCoordinatorPrompt:
     def test_contains_delegation_instructions(self):
         prompt = build_coordinator_prompt(SessionState())
         assert "delegate" in prompt.lower()
+
+    def test_contains_available_skills(self):
+        prompt = build_coordinator_prompt(SessionState())
+        assert "<available_skills>" in prompt
         assert "code" in prompt
         assert "explore" in prompt
         assert "plan" in prompt

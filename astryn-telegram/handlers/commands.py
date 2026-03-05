@@ -91,14 +91,21 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     active = data["active"]
     models = data["models"]
+    coordinator = data.get("coordinator", {})
+    specialist = data.get("specialist", {})
+
+    # Info header
+    coord_info = f"Coordinator: {coordinator.get('provider', '?')}/{coordinator.get('model', '?')}"
+    spec_info = f"Specialist: ollama/{specialist.get('model', active)}"
 
     buttons = [
         [InlineKeyboardButton(f"✅ {m}" if m == active else m, callback_data=f"model_select:{m}")]
         for m in models
     ]
+    buttons.append([InlineKeyboardButton("📥 Pull model...", callback_data="model_pull_prompt")])
 
     await update.message.reply_text(
-        f"Active: `{active}`\n\nTap to switch:",
+        f"*Models*\n\n{coord_info}\n{spec_info}\n\nInstalled (tap to set as default):",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(buttons),
     )

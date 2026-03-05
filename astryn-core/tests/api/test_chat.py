@@ -8,10 +8,11 @@ from store.domain import CommunicationPreferences, SessionState
 from tools.registry import COORDINATOR_TOOLS
 
 
-def _standard_patches(mock_provider, agent_result):
+def _standard_patches(mock_coordinator, mock_specialist, agent_result):
     """Context managers for the standard set of patches needed for chat tests."""
     return [
-        patch("api.routes.chat.get_provider", return_value=mock_provider),
+        patch("api.routes.chat.get_coordinator_provider", return_value=mock_coordinator),
+        patch("api.routes.chat.get_specialist_provider", return_value=mock_specialist),
         patch("api.routes.chat.run_agent", new_callable=AsyncMock, return_value=agent_result),
         patch(
             "services.session.ensure_session",
@@ -54,7 +55,7 @@ class TestChatEndpoint:
         )
 
         with ExitStack() as stack:
-            for cm in _standard_patches(mock_provider, agent_result):
+            for cm in _standard_patches(mock_provider, mock_provider, agent_result):
                 stack.enter_context(cm)
             resp = await client.post(
                 "/chat",
@@ -88,7 +89,7 @@ class TestChatEndpoint:
         )
 
         with ExitStack() as stack:
-            for cm in _standard_patches(mock_provider, agent_result):
+            for cm in _standard_patches(mock_provider, mock_provider, agent_result):
                 stack.enter_context(cm)
             resp = await client.post(
                 "/chat",
@@ -103,11 +104,12 @@ class TestChatEndpoint:
         assert data["action"]["id"] == "confirm-123"
         assert data["action"]["preview"] == "Write to test.py"
 
-    async def test_chat_503_when_ollama_down(self, client, auth_headers, mock_provider):
+    async def test_chat_503_when_provider_down(self, client, auth_headers, mock_provider):
         mock_provider.is_available = AsyncMock(return_value=False)
 
         with (
-            patch("api.routes.chat.get_provider", return_value=mock_provider),
+            patch("api.routes.chat.get_coordinator_provider", return_value=mock_provider),
+            patch("api.routes.chat.get_fallback_provider", return_value=mock_provider),
             patch(
                 "services.session.ensure_session",
                 new_callable=AsyncMock,
@@ -145,7 +147,8 @@ class TestChatEndpoint:
         mock_run_agent = AsyncMock(return_value=agent_result)
 
         with (
-            patch("api.routes.chat.get_provider", return_value=mock_provider),
+            patch("api.routes.chat.get_coordinator_provider", return_value=mock_provider),
+            patch("api.routes.chat.get_specialist_provider", return_value=mock_provider),
             patch("api.routes.chat.run_agent", mock_run_agent),
             patch(
                 "services.session.ensure_session",
@@ -171,6 +174,46 @@ class TestChatEndpoint:
         call_kwargs = mock_run_agent.call_args
         assert call_kwargs.kwargs.get("tools") is COORDINATOR_TOOLS
 
+    async def test_chat_passes_specialist_provider(self, client, auth_headers, mock_provider):
+        """Verify that run_agent is called with specialist_provider."""
+        agent_result = AgentResult(
+            reply="Hi there",
+            model="ollama/test-model",
+            messages=[],
+        )
+
+        mock_run_agent = AsyncMock(return_value=agent_result)
+        mock_specialist = AsyncMock()
+        mock_specialist.model_name = "ollama/specialist-model"
+
+        with (
+            patch("api.routes.chat.get_coordinator_provider", return_value=mock_provider),
+            patch("api.routes.chat.get_specialist_provider", return_value=mock_specialist),
+            patch("api.routes.chat.run_agent", mock_run_agent),
+            patch(
+                "services.session.ensure_session",
+                new_callable=AsyncMock,
+                return_value=SessionState(),
+            ),
+            patch("services.session.add_user_message", new_callable=AsyncMock),
+            patch("services.session.get_history_for_llm", new_callable=AsyncMock, return_value=[]),
+            patch("services.session.persist_agent_messages", new_callable=AsyncMock),
+            patch("services.session.update_state", new_callable=AsyncMock),
+            patch(
+                "services.preferences.get_preferences",
+                new_callable=AsyncMock,
+                return_value=CommunicationPreferences(),
+            ),
+        ):
+            await client.post(
+                "/chat",
+                json={"message": "hello"},
+                headers=auth_headers,
+            )
+
+        call_kwargs = mock_run_agent.call_args
+        assert call_kwargs.kwargs.get("specialist_provider") is mock_specialist
+
     async def test_chat_uses_coordinator_prompt(self, client, auth_headers, mock_provider):
         """Verify that run_agent is called with coordinator prompt (not system.md)."""
         agent_result = AgentResult(
@@ -182,7 +225,8 @@ class TestChatEndpoint:
         mock_run_agent = AsyncMock(return_value=agent_result)
 
         with (
-            patch("api.routes.chat.get_provider", return_value=mock_provider),
+            patch("api.routes.chat.get_coordinator_provider", return_value=mock_provider),
+            patch("api.routes.chat.get_specialist_provider", return_value=mock_provider),
             patch("api.routes.chat.run_agent", mock_run_agent),
             patch(
                 "services.session.ensure_session",

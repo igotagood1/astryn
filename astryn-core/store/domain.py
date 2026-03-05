@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -47,6 +48,17 @@ class SessionState:
 
     active_project: str | None = None
     last_activity_at: datetime | None = field(default=None, repr=False)
+
+
+@dataclass
+class ApiUsageRecord:
+    """A single Anthropic API usage record."""
+
+    model: str
+    input_tokens: int
+    output_tokens: int
+    estimated_cost_usd: Decimal
+    session_id: str | None = None
 
 
 # ── In-memory transient state ────────────────────────────────────────────────

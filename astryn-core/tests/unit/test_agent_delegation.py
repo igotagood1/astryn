@@ -7,7 +7,7 @@ import pytest
 from llm.agent import PendingConfirmation, resume_agent, run_agent
 from llm.base import LLMResponse
 from store.domain import SessionState
-from tools.registry import COORDINATOR_TOOLS
+from tools.registry import COORDINATOR_TOOLS, READ_WRITE_TOOLS
 
 
 def _patch_repo():
@@ -17,7 +17,7 @@ def _patch_repo():
     )
 
 
-def _coordinator_delegate_response(specialist="explore", task="list files", context=""):
+def _coordinator_delegate_response(skill="explore", task="list files", context=""):
     """LLM response that calls the delegate tool."""
     return LLMResponse(
         content="",
@@ -29,7 +29,7 @@ def _coordinator_delegate_response(specialist="explore", task="list files", cont
                 "function": {
                     "name": "delegate",
                     "arguments": {
-                        "specialist": specialist,
+                        "skill": skill,
                         "task": task,
                         "context": context,
                     },
@@ -502,15 +502,53 @@ class TestResumeExecuteToolError:
         assert "failed" in result.reply.lower() or "try" in result.reply.lower()
 
 
+class TestTestWriterDelegation:
+    async def test_test_writer_gets_read_write_tools(self, mock_db):
+        """Delegating to test-writer provides READ_WRITE_TOOLS (write but no run_command)."""
+        provider = AsyncMock()
+        provider.model_name = "ollama/test-model"
+
+        specialist_tools = None
+        responses = [
+            _coordinator_delegate_response("test-writer", "write unit tests"),
+            _text_response("Tests written: test_foo.py"),
+            _text_response("I wrote the tests for you."),
+        ]
+        call_idx = 0
+
+        async def tracking_chat(messages, system, tools=None, **kwargs):
+            nonlocal call_idx, specialist_tools
+            result = responses[call_idx]
+            call_idx += 1
+            if call_idx == 2:  # specialist call
+                specialist_tools = tools
+            return result
+
+        provider.chat = AsyncMock(side_effect=tracking_chat)
+
+        with _patch_repo():
+            await run_agent(
+                provider=provider,
+                messages=[{"role": "user", "content": "write tests"}],
+                system="coordinator prompt",
+                session_id="test-session",
+                session_state=SessionState(active_project="myproj"),
+                db=mock_db,
+                tools=COORDINATOR_TOOLS,
+            )
+
+        assert specialist_tools is READ_WRITE_TOOLS
+
+
 class TestDelegateModelValidation:
-    def test_delegate_empty_specialist_rejected(self):
-        """Delegate model rejects empty specialist field."""
+    def test_delegate_empty_skill_rejected(self):
+        """Delegate model rejects empty skill field."""
         from pydantic import ValidationError
 
         from tools.models import Delegate
 
         with pytest.raises(ValidationError):
-            Delegate(specialist="", task="do something")
+            Delegate(skill="", task="do something")
 
     def test_delegate_empty_task_rejected(self):
         """Delegate model rejects empty task field."""
@@ -519,14 +557,15 @@ class TestDelegateModelValidation:
         from tools.models import Delegate
 
         with pytest.raises(ValidationError):
-            Delegate(specialist="code", task="")
+            Delegate(skill="code", task="")
 
     def test_delegate_valid_passes(self):
         """Delegate model accepts valid inputs."""
         from tools.models import Delegate
 
-        d = Delegate(specialist="code", task="write a file")
-        assert d.specialist == "code"
+        d = Delegate(skill="code", task="write a file")
+        assert d.skill == "code"
+        assert d.specialist == "code"  # backward-compat property
         assert d.task == "write a file"
         assert d.context == ""
 
@@ -536,7 +575,95 @@ class TestDelegateInExecutor:
         """Delegate tool is handled by agent loop, executor returns informational message."""
         from tools.executor import execute_tool
 
-        result = await execute_tool(
-            "delegate", {"specialist": "code", "task": "test"}, SessionState()
-        )
+        result = await execute_tool("delegate", {"skill": "code", "task": "test"}, SessionState())
         assert "agent loop" in result.lower()
+
+
+class TestMultiProviderDelegation:
+    async def test_specialist_provider_used_for_delegate(self, mock_db, tmp_path):
+        """When specialist_provider is set, delegate uses it instead of coordinator provider."""
+        coordinator = AsyncMock()
+        coordinator.model_name = "anthropic/claude-sonnet-4-6"
+
+        specialist = AsyncMock()
+        specialist.model_name = "ollama/test-model"
+
+        # Coordinator delegates, specialist runs, coordinator formats
+        coordinator.chat = AsyncMock(
+            side_effect=[
+                _coordinator_delegate_response("explore", "list files"),
+                _text_response("Here are your files."),
+            ]
+        )
+        specialist.chat = AsyncMock(
+            return_value=_text_response("Found: main.py, utils.py"),
+        )
+
+        with _patch_repo():
+            result = await run_agent(
+                provider=coordinator,
+                messages=[{"role": "user", "content": "list files"}],
+                system="coordinator prompt",
+                session_id="test-session",
+                session_state=SessionState(),
+                db=mock_db,
+                tools=COORDINATOR_TOOLS,
+                specialist_provider=specialist,
+            )
+
+        assert result.reply == "Here are your files."
+        # Specialist provider should have been called (for the explore agent)
+        assert specialist.chat.call_count == 1
+        # Coordinator should have been called twice (delegate + format)
+        assert coordinator.chat.call_count == 2
+
+    async def test_resume_with_coordinator_provider(self, mock_db, tmp_path):
+        """Resume passes coordinator_provider to _resume_coordinator."""
+        specialist = AsyncMock()
+        specialist.model_name = "ollama/test-model"
+        specialist.chat = AsyncMock(
+            return_value=_text_response("File written: hello.py"),
+        )
+
+        coordinator = AsyncMock()
+        coordinator.model_name = "anthropic/claude-sonnet-4-6"
+        coordinator.chat = AsyncMock(
+            return_value=_text_response("Done — I wrote hello.py for you."),
+        )
+
+        (tmp_path / "proj").mkdir()
+
+        pending = PendingConfirmation(
+            id="conf-1",
+            session_id="test-session",
+            tool_name="write_file",
+            tool_args={"path": "hello.py", "content": "print('hello')"},
+            tool_call_id="call-w",
+            preview="Write hello.py",
+            system="specialist prompt",
+            messages=[{"role": "user", "content": "Task: write hello.py"}],
+            session_state=SessionState(active_project="proj"),
+            coordinator_messages=[
+                {"role": "user", "content": "create hello.py"},
+                {"role": "assistant", "content": "", "tool_calls": [{"id": "call-d"}]},
+            ],
+            coordinator_system="coordinator prompt",
+            delegate_tool_call_id="call-d",
+        )
+
+        with (
+            _patch_repo(),
+            patch("tools.executor.REPOS_ROOT", tmp_path),
+            patch("tools.safety.REPOS_ROOT", tmp_path),
+        ):
+            result = await resume_agent(
+                provider=specialist,
+                pending=pending,
+                approved=True,
+                db=mock_db,
+                coordinator_provider=coordinator,
+            )
+
+        assert result.reply == "Done — I wrote hello.py for you."
+        # Coordinator should have been used for the final formatting
+        assert coordinator.chat.call_count == 1

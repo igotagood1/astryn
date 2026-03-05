@@ -97,27 +97,27 @@ class GrepFiles(BaseModel):
 
 
 class Delegate(BaseModel):
-    """Delegate a task to a specialist agent.
+    """Delegate a task to a specialist skill.
 
     Use this when the user's request requires file access, code changes,
-    or deep exploration. The specialist runs with its own tools and context,
+    or deep exploration. The skill runs with its own tools and context,
     then returns its result to you for formatting.
     """
 
-    specialist: str = Field(
+    skill: str = Field(
         min_length=1,
-        description=(
-            "Which specialist to delegate to: "
-            "'code' (read/write files, run commands), "
-            "'explore' (read-only file browsing and search), "
-            "'plan' (read-only analysis, devil's advocate review)"
-        ),
+        description="Which skill to use (e.g., 'code', 'explore', 'plan')",
     )
     task: str = Field(min_length=1, description="Clear task description for the specialist")
     context: str = Field(
         default="",
         description="Relevant file paths, error messages, or constraints from the conversation",
     )
+
+    @property
+    def specialist(self) -> str:
+        """Backward-compat alias for skill."""
+        return self.skill
 
 
 type AnyTool = (
@@ -160,6 +160,9 @@ def parse_tool(name: str, args: dict) -> AnyTool:
         case "grep_files":
             return GrepFiles.model_validate(args)
         case "delegate":
+            # Accept both "skill" (new) and "specialist" (legacy) field names
+            if "specialist" in args and "skill" not in args:
+                args = {**args, "skill": args.pop("specialist")}
             return Delegate.model_validate(args)
         case _:
             raise ValueError(f"Unknown tool: {name!r}")

@@ -65,6 +65,7 @@ class AgentResult:
     model: str
     messages: list[dict]
     pending: PendingConfirmation | None = None
+    usage: dict | None = None  # cumulative token usage {"input_tokens": N, "output_tokens": N}
 
 
 async def run_agent(
@@ -75,12 +76,19 @@ async def run_agent(
     session_state: SessionState,
     db: AsyncSession,
     tools: list[dict] | None = None,
+    specialist_provider: LLMProvider | None = None,
 ) -> AgentResult:
     """Run the agentic tool loop.
 
     Calls the LLM repeatedly, executing safe tool calls immediately and
     pausing on any tool that requires user confirmation.
+
+    Args:
+        specialist_provider: Provider used for specialist sub-agents when
+            handling delegate tool calls. Falls back to ``provider`` if None.
     """
+    cumulative_usage = {"input_tokens": 0, "output_tokens": 0}
+
     for iteration in range(MAX_ITERATIONS):
         # Re-derive available tools each iteration so that set_project
         # mid-turn unlocks file/code tools without needing a second request.
@@ -95,15 +103,24 @@ async def run_agent(
         response = await provider.chat(messages, system, tools=effective_tools)
         messages = [*messages, response.to_message()]
 
+        # Accumulate token usage
+        if response.usage:
+            cumulative_usage["input_tokens"] += response.usage.get("input_tokens", 0)
+            cumulative_usage["output_tokens"] += response.usage.get("output_tokens", 0)
+
         if not response.tool_calls:
+            usage = cumulative_usage if any(cumulative_usage.values()) else None
             if _looks_like_failed_tool_call(response.content):
                 logger.warning("Model output a tool call as plain text: session=%s", session_id)
                 return AgentResult(
                     reply=MODEL_TOOL_UNSUPPORTED_REPLY,
                     model=response.model,
                     messages=messages,
+                    usage=usage,
                 )
-            return AgentResult(reply=response.content, model=response.model, messages=messages)
+            return AgentResult(
+                reply=response.content, model=response.model, messages=messages, usage=usage
+            )
 
         outcome = await _process_tool_calls(
             tool_calls=response.tool_calls,
@@ -113,6 +130,7 @@ async def run_agent(
             session_state=session_state,
             provider=provider,
             db=db,
+            specialist_provider=specialist_provider,
         )
 
         if isinstance(outcome, AgentResult):
@@ -133,8 +151,15 @@ async def resume_agent(
     pending: PendingConfirmation,
     approved: bool,
     db: AsyncSession,
+    coordinator_provider: LLMProvider | None = None,
 ) -> AgentResult:
-    """Resume the agent after the user approves or rejects a pending tool call."""
+    """Resume the agent after the user approves or rejects a pending tool call.
+
+    Args:
+        provider: Provider for the specialist (or single-agent) continuation.
+        coordinator_provider: Provider for resuming the coordinator after a
+            delegated specialist completes. Falls back to ``provider`` if None.
+    """
     if approved:
         logger.info("Executing approved tool: %s", pending.tool_name)
         try:
@@ -207,8 +232,9 @@ async def resume_agent(
         assert pending.delegate_tool_call_id is not None, (
             "delegate_tool_call_id must be set for delegation"
         )
+        coord_provider = coordinator_provider or provider
         return await _resume_coordinator(
-            provider=provider,
+            provider=coord_provider,
             specialist_reply=specialist_result.reply,
             coordinator_messages=pending.coordinator_messages,
             coordinator_system=pending.coordinator_system,
@@ -216,13 +242,14 @@ async def resume_agent(
             session_id=pending.session_id,
             session_state=pending.session_state,
             db=db,
+            specialist_provider=provider,
         )
 
     return specialist_result
 
 
 async def _run_specialist(
-    specialist_name: str,
+    skill_name: str,
     task: str,
     context: str,
     coordinator_messages: list[dict],
@@ -234,12 +261,13 @@ async def _run_specialist(
     db: AsyncSession,
 ) -> "AgentResult | str":
     """Run a specialist sub-agent. Returns AgentResult if confirmation needed, else reply string."""
-    from llm.specialists import SPECIALISTS
+    from llm.skills import discover_skills
 
-    spec = SPECIALISTS.get(specialist_name)
-    if spec is None:
-        available = ", ".join(SPECIALISTS.keys())
-        return f"Unknown specialist: {specialist_name!r}. Available: {available}"
+    skills = discover_skills(_get_user_skill_dirs())
+    skill = skills.get(skill_name)
+    if skill is None:
+        available = ", ".join(skills.keys())
+        return f"Unknown skill: {skill_name!r}. Available: {available}"
 
     # Build fresh messages for specialist
     user_content = f"Task: {task}"
@@ -248,21 +276,28 @@ async def _run_specialist(
     specialist_messages = [{"role": "user", "content": user_content}]
 
     # Build specialist system prompt with session state
-    specialist_system = spec.system_prompt
+    specialist_system = skill.system_prompt
     if session_state.active_project:
         specialist_system += f"\n\nActive project: {session_state.active_project}"
 
-    specialist_tools = spec.tools if session_state.active_project else NO_PROJECT_TOOLS
+    specialist_tools = skill.tools if session_state.active_project else NO_PROJECT_TOOLS
+
+    # Use skill's preferred model if set
+    effective_provider = provider
+    if skill.preferred_model:
+        from llm.router import get_specialist_provider
+
+        effective_provider = get_specialist_provider(model=skill.preferred_model)
 
     logger.info(
-        "Running specialist: %s session=%s task=%s",
-        specialist_name,
+        "Running skill: %s session=%s task=%s",
+        skill_name,
         session_id,
         task[:100],
     )
 
     result = await run_agent(
-        provider=provider,
+        provider=effective_provider,
         messages=specialist_messages,
         system=specialist_system,
         session_id=session_id,
@@ -281,6 +316,16 @@ async def _run_specialist(
     return result.reply
 
 
+def _get_user_skill_dirs() -> list:
+    """Return user skill directories from config (if any)."""
+    from pathlib import Path
+
+    from llm.config import settings
+
+    user_dir = Path(settings.astryn_skills_dir).expanduser()
+    return [user_dir] if user_dir.is_dir() else []
+
+
 async def _resume_coordinator(
     provider: LLMProvider,
     specialist_reply: str,
@@ -290,6 +335,7 @@ async def _resume_coordinator(
     session_id: str,
     session_state: SessionState,
     db: AsyncSession,
+    specialist_provider: LLMProvider | None = None,
 ) -> AgentResult:
     """Resume the coordinator after a specialist completes."""
     messages = [
@@ -309,6 +355,7 @@ async def _resume_coordinator(
         session_state=session_state,
         db=db,
         tools=COORDINATOR_TOOLS,
+        specialist_provider=specialist_provider,
     )
 
 
@@ -320,6 +367,7 @@ async def _process_tool_calls(
     session_state: SessionState,
     provider: LLMProvider,
     db: AsyncSession,
+    specialist_provider: LLMProvider | None = None,
 ) -> "list[dict] | AgentResult":
     """Process a batch of tool calls sequentially.
 
@@ -349,14 +397,17 @@ async def _process_tool_calls(
 
         # Handle delegate tool specially
         if tool_name == "delegate":
-            specialist_name = tool_args.get("specialist", "")
+            # Accept both "skill" (new) and "specialist" (legacy) field names
+            skill_name = tool_args.get("skill") or tool_args.get("specialist", "")
             logger.info(
-                "Coordinator delegating to specialist: %s session=%s",
-                specialist_name,
+                "Coordinator delegating to skill: %s session=%s",
+                skill_name,
                 session_id,
             )
+            # Use specialist_provider for the delegate sub-agent
+            delegate_provider = specialist_provider or provider
             outcome = await _run_specialist(
-                specialist_name=specialist_name,
+                skill_name=skill_name,
                 task=tool_args.get("task", ""),
                 context=tool_args.get("context", ""),
                 coordinator_messages=messages,
@@ -364,7 +415,7 @@ async def _process_tool_calls(
                 delegate_tool_call_id=tool_call_id,
                 session_id=session_id,
                 session_state=session_state,
-                provider=provider,
+                provider=delegate_provider,
                 db=db,
             )
 

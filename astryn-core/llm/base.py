@@ -2,12 +2,20 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 
+class ProviderUnavailable(Exception):
+    """Raised when an LLM provider cannot fulfil a request.
+
+    The caller should fall back to an alternative provider.
+    """
+
+
 @dataclass
 class LLMResponse:
     content: str
     model: str
     provider: str
     tool_calls: list[dict] = field(default_factory=list)
+    usage: dict | None = None
 
     def to_message(self) -> dict:
         """Convert to a message dict for the conversation history."""

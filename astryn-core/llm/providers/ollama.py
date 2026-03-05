@@ -28,6 +28,17 @@ class OllamaProvider(LLMProvider):
             r.raise_for_status()
             return [m["name"] for m in r.json().get("models", [])]
 
+    async def pull_model(self, model: str) -> str:
+        """Pull a model from the Ollama registry. Returns status message."""
+        async with httpx.AsyncClient(timeout=600) as client:
+            r = await client.post(
+                f"{self.base_url}/api/pull",
+                json={"name": model, "stream": False},
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data.get("status", "success")
+
     async def chat(
         self,
         messages: list[dict],

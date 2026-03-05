@@ -11,6 +11,8 @@ os.environ.setdefault("ASTRYN_API_KEY", "test-key")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://fake:fake@localhost/fake")
 os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434")
 os.environ.setdefault("ASTRYN_DEFAULT_MODEL", "test-model")
+os.environ.setdefault("ASTRYN_COORDINATOR_PROVIDER", "ollama")
+os.environ.setdefault("ASTRYN_SPECIALIST_MODEL", "test-model")
 
 from unittest.mock import AsyncMock
 

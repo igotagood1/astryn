@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import db.repository as repo
 from llm.config import settings
+from llm.skills import format_available_skills_block, load_skill_metadata
 from prompts.coordinator import COORDINATOR_PROMPT_TEMPLATE
 from prompts.system import SYSTEM_PROMPT
 from services.preferences import format_preferences_block
@@ -92,16 +93,19 @@ def build_coordinator_prompt(
     state: SessionState,
     prefs: CommunicationPreferences | None = None,
 ) -> str:
-    """Assemble the coordinator system prompt with preferences and session state."""
+    """Assemble the coordinator system prompt with preferences, skills, and session state."""
     if prefs is None:
         prefs = CommunicationPreferences()
 
     preferences_block = format_preferences_block(prefs)
     session_state_block = _build_session_state_block(state)
+    skills_metadata = load_skill_metadata()
+    available_skills_block = format_available_skills_block(skills_metadata)
 
     return COORDINATOR_PROMPT_TEMPLATE.format(
         preferences_block=preferences_block,
         session_state_block=session_state_block,
+        available_skills_block=available_skills_block,
     )
 
 
