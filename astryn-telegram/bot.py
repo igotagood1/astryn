@@ -11,6 +11,7 @@ from telegram.ext import (
 # config must be imported before handlers so env vars are loaded and validated
 # before any other module tries to read them.
 import config
+from core_client import close_client
 from handlers.callbacks import (
     handle_confirmation,
     handle_model_pull_prompt,
@@ -29,6 +30,11 @@ from handlers.commands import (
     cmd_status,
 )
 from handlers.message import handle_message
+
+
+async def _on_shutdown(_app):
+    """Clean up the persistent HTTP client."""
+    await close_client()
 
 
 class _RedactSecretsFilter(logging.Filter):
@@ -76,6 +82,8 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_pref_menu, pattern=r"^pref_menu:"))
     app.add_handler(CallbackQueryHandler(handle_pref_set, pattern=r"^pref_set:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    app.post_shutdown = _on_shutdown
 
     logger.info("Starting Astryn Telegram bot (polling mode)...")
     app.run_polling()

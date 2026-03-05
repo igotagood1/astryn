@@ -29,7 +29,10 @@ async def confirm_tool(
 ):
     pending = pending_confirmations.pop(confirmation_id, None)
     if not pending:
-        raise HTTPException(status_code=404, detail="Confirmation not found or already resolved")
+        raise HTTPException(
+            status_code=404,
+            detail="This action has expired or was already resolved. Please ask me again.",
+        )
 
     approved = req.action == "approve"
     logger.info(

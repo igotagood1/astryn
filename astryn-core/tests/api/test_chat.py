@@ -3,9 +3,21 @@
 from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from llm.agent import AgentResult, PendingConfirmation
 from store.domain import CommunicationPreferences, SessionState
 from tools.registry import COORDINATOR_TOOLS
+
+
+@pytest.fixture(autouse=True)
+def _clear_availability_cache():
+    """Clear the provider availability cache between tests."""
+    from api.routes.chat import _availability_cache
+
+    _availability_cache.clear()
+    yield
+    _availability_cache.clear()
 
 
 def _standard_patches(mock_coordinator, mock_specialist, agent_result):

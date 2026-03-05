@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
 from tools.models import (
     ApplyDiff,
+    CommitChanges,
+    CreateBranch,
     CreateProject,
     Delegate,
     GrepFiles,
@@ -16,6 +21,9 @@ from tools.models import (
     SetProject,
     WriteFile,
 )
+
+if TYPE_CHECKING:
+    from store.domain import SessionState
 
 
 @dataclass
@@ -40,7 +48,7 @@ class ToolDef:
     """
 
     schema: dict
-    requires_confirmation: bool | Callable[[dict], bool] = False
+    requires_confirmation: bool | Callable[[dict, SessionState | None], bool] = False
     build_preview: Callable[[dict], str] | None = None
 
 
@@ -65,7 +73,9 @@ def _schema_from_model(name: str, model: type[BaseModel]) -> dict:
     }
 
 
-def _run_command_needs_confirmation(tool_args: dict) -> bool:
+def _run_command_needs_confirmation(
+    tool_args: dict, session_state: SessionState | None = None
+) -> bool:
     """Check the command whitelist to decide if confirmation is required.
 
     Defers to validate_command so the same whitelist rules apply
@@ -82,16 +92,35 @@ def _run_command_needs_confirmation(tool_args: dict) -> bool:
         return True  # unknown parse errors: confirm rather than silently run
 
 
+def _write_file_needs_confirmation(
+    tool_args: dict, session_state: SessionState | None = None
+) -> bool:
+    """Check if the target file already exists — only overwrites need confirmation.
+
+    New files are safe to create without asking. Existing files require
+    confirmation to protect against accidental data loss.
+
+    Falls back to confirming when the path can't be resolved (no active
+    project, security error) — safer to ask than to silently allow.
+    """
+    from tools.safety import SecurityError, validate_path
+
+    if session_state is None or session_state.active_project is None:
+        return True  # no project context → always confirm
+
+    try:
+        resolved = validate_path(tool_args.get("path", ""), session_state.active_project)
+        return resolved.exists()
+    except (SecurityError, Exception):
+        return True  # can't resolve → always confirm
+
+
 REGISTRY: dict[str, ToolDef] = {
     "list_projects": ToolDef(
         schema=_schema_from_model("list_projects", ListProjects),
     ),
     "create_project": ToolDef(
         schema=_schema_from_model("create_project", CreateProject),
-        requires_confirmation=True,
-        build_preview=lambda args: (
-            f"Create project `{args.get('name', '?')}` in ~/repos and initialize git."
-        ),
     ),
     "set_project": ToolDef(
         schema=_schema_from_model("set_project", SetProject),
@@ -106,14 +135,14 @@ REGISTRY: dict[str, ToolDef] = {
         schema=_schema_from_model("apply_diff", ApplyDiff),
         requires_confirmation=True,
         build_preview=lambda args: (
-            f"Apply diff to `{args.get('path', '?')}`:\n\n"
+            f"**apply_diff** → `{args.get('path', '?')}`\n\n"
             f"```diff\n- {args.get('old_str', '')}\n+ {args.get('new_str', '')}\n```"
         ),
     ),
     "write_file": ToolDef(
         schema=_schema_from_model("write_file", WriteFile),
-        requires_confirmation=True,
-        build_preview=lambda args: "Write to `{}`:\n\n```\n{}\n```".format(
+        requires_confirmation=_write_file_needs_confirmation,
+        build_preview=lambda args: "**write_file** → `{}`\n\n```\n{}\n```".format(
             args.get("path", "?"),
             args.get("content", "")[:1500]
             + ("\n...[truncated]" if len(args.get("content", "")) > 1500 else ""),
@@ -122,7 +151,7 @@ REGISTRY: dict[str, ToolDef] = {
     "run_command": ToolDef(
         schema=_schema_from_model("run_command", RunCommand),
         requires_confirmation=_run_command_needs_confirmation,
-        build_preview=lambda args: f"Run: `{args.get('command', '?')}`",
+        build_preview=lambda args: f"**run_command**\n\n`{args.get('command', '?')}`",
     ),
     "search_files": ToolDef(
         schema=_schema_from_model("search_files", SearchFiles),
@@ -130,15 +159,21 @@ REGISTRY: dict[str, ToolDef] = {
     "grep_files": ToolDef(
         schema=_schema_from_model("grep_files", GrepFiles),
     ),
+    "create_branch": ToolDef(
+        schema=_schema_from_model("create_branch", CreateBranch),
+    ),
+    "commit_changes": ToolDef(
+        schema=_schema_from_model("commit_changes", CommitChanges),
+        requires_confirmation=True,
+        build_preview=lambda args: "**commit_changes**\n\n{}\nFiles: {}".format(
+            args.get("message", "?"),
+            ", ".join(args.get("files", [])) or "(all changes)",
+        ),
+    ),
     "delegate": ToolDef(
         schema=_schema_from_model("delegate", Delegate),
     ),
 }
-
-# The list of tool schemas for specialist agents (all tools except delegate).
-# Delegate is coordinator-only and should never be available to specialists.
-_SPECIALIST_EXCLUDED = {"delegate"}
-TOOLS: list[dict] = [t.schema for name, t in REGISTRY.items() if name not in _SPECIALIST_EXCLUDED]
 
 # Minimal tool set for sessions with no active project.
 # The user can still list and select projects; file/code tools
@@ -151,7 +186,7 @@ NO_PROJECT_TOOLS: list[dict] = [
 # Coordinator only sees the delegate tool — it cannot call file/code tools directly.
 COORDINATOR_TOOLS: list[dict] = [REGISTRY["delegate"].schema]
 
-# Read-only tools for explore and plan specialists.
+# Read-only tools — fallback for user-defined skills.
 _READ_ONLY_TOOL_NAMES = {
     "list_projects",
     "set_project",
@@ -164,8 +199,33 @@ READ_ONLY_TOOLS: list[dict] = [
     t.schema for name, t in REGISTRY.items() if name in _READ_ONLY_TOOL_NAMES
 ]
 
-# Read-write tools: read-only + write_file/apply_diff (no run_command).
-_READ_WRITE_TOOL_NAMES = _READ_ONLY_TOOL_NAMES | {"write_file", "apply_diff"}
-READ_WRITE_TOOLS: list[dict] = [
-    t.schema for name, t in REGISTRY.items() if name in _READ_WRITE_TOOL_NAMES
+# Writer tools: full read/write/run access, create branches. Cannot commit.
+_WRITER_TOOL_NAMES = {
+    "list_projects",
+    "create_project",
+    "set_project",
+    "list_files",
+    "read_file",
+    "search_files",
+    "grep_files",
+    "write_file",
+    "apply_diff",
+    "run_command",
+    "create_branch",
+}
+WRITER_TOOLS: list[dict] = [t.schema for name, t in REGISTRY.items() if name in _WRITER_TOOL_NAMES]
+
+# Reviewer tools: read + run tests + commit. Cannot write files.
+_REVIEWER_TOOL_NAMES = {
+    "list_projects",
+    "set_project",
+    "list_files",
+    "read_file",
+    "search_files",
+    "grep_files",
+    "run_command",
+    "commit_changes",
+}
+REVIEWER_TOOLS: list[dict] = [
+    t.schema for name, t in REGISTRY.items() if name in _REVIEWER_TOOL_NAMES
 ]

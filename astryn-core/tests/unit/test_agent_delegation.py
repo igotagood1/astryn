@@ -7,7 +7,7 @@ import pytest
 from llm.agent import PendingConfirmation, resume_agent, run_agent
 from llm.base import LLMResponse
 from store.domain import SessionState
-from tools.registry import COORDINATOR_TOOLS, READ_WRITE_TOOLS
+from tools.registry import COORDINATOR_TOOLS, WRITER_TOOLS
 
 
 def _patch_repo():
@@ -17,7 +17,7 @@ def _patch_repo():
     )
 
 
-def _coordinator_delegate_response(skill="explore", task="list files", context=""):
+def _coordinator_delegate_response(skill="code-writer", task="list files", context=""):
     """LLM response that calls the delegate tool."""
     return LLMResponse(
         content="",
@@ -70,7 +70,7 @@ class TestDelegateCallsSpecialist:
         provider.chat = AsyncMock(
             side_effect=[
                 # Coordinator calls delegate
-                _coordinator_delegate_response("explore", "list available projects"),
+                _coordinator_delegate_response("code-writer", "list available projects"),
                 # Specialist runs list_projects, then replies
                 _tool_call_response("list_projects", {}),
                 _text_response("Projects: proj1, proj2"),
@@ -106,7 +106,7 @@ class TestDelegateCallsSpecialist:
         provider.model_name = "ollama/test-model"
         provider.chat = AsyncMock(
             side_effect=[
-                _coordinator_delegate_response("explore", "what is in the project?"),
+                _coordinator_delegate_response("code-writer", "what is in the project?"),
                 # Specialist replies directly (no tools)
                 _text_response("The project has 3 files: main.py, utils.py, tests.py"),
                 # Coordinator formats
@@ -160,13 +160,13 @@ class TestSpecialistConfirmation:
         provider.model_name = "ollama/test-model"
         provider.chat = AsyncMock(
             side_effect=[
-                # Coordinator delegates to code specialist
-                _coordinator_delegate_response("code", "write hello.py"),
-                # Specialist calls write_file (needs confirmation)
+                # Coordinator delegates to code-writer specialist
+                _coordinator_delegate_response("code-writer", "edit hello.py"),
+                # Specialist calls apply_diff (always needs confirmation)
                 _tool_call_response(
-                    "write_file",
-                    {"path": "hello.py", "content": "print('hello')"},
-                    "call-write-1",
+                    "apply_diff",
+                    {"path": "hello.py", "old_str": "old", "new_str": "new"},
+                    "call-diff-1",
                 ),
             ]
         )
@@ -174,7 +174,7 @@ class TestSpecialistConfirmation:
         with _patch_repo():
             result = await run_agent(
                 provider=provider,
-                messages=[{"role": "user", "content": "create hello.py"}],
+                messages=[{"role": "user", "content": "edit hello.py"}],
                 system="coordinator prompt",
                 session_id="test-session",
                 session_state=SessionState(active_project="myproj"),
@@ -183,7 +183,7 @@ class TestSpecialistConfirmation:
             )
 
         assert result.pending is not None
-        assert result.pending.tool_name == "write_file"
+        assert result.pending.tool_name == "apply_diff"
 
     async def test_confirmation_has_coordinator_state(self, mock_db):
         """PendingConfirmation includes coordinator state for resume."""
@@ -191,11 +191,11 @@ class TestSpecialistConfirmation:
         provider.model_name = "ollama/test-model"
         provider.chat = AsyncMock(
             side_effect=[
-                _coordinator_delegate_response("code", "edit file"),
+                _coordinator_delegate_response("code-writer", "edit file"),
                 _tool_call_response(
-                    "write_file",
-                    {"path": "x.py", "content": "x"},
-                    "call-w",
+                    "apply_diff",
+                    {"path": "x.py", "old_str": "old", "new_str": "new"},
+                    "call-d-1",
                 ),
             ]
         )
@@ -359,7 +359,7 @@ class TestCoordinatorFormatsAfterSpecialist:
             call_count += 1
             if call_count == 1:
                 # Coordinator delegates
-                return _coordinator_delegate_response("explore", "find README")
+                return _coordinator_delegate_response("code-writer", "find README")
             elif call_count == 2:
                 # Specialist returns result
                 return _text_response("README.md contents:\n# My Project\nA cool project.")
@@ -434,7 +434,7 @@ class TestDelegateAuditLogging:
         provider.model_name = "ollama/test-model"
         provider.chat = AsyncMock(
             side_effect=[
-                _coordinator_delegate_response("explore", "find files"),
+                _coordinator_delegate_response("code-writer", "find files"),
                 _text_response("Found some files."),
                 _text_response("Here are your files."),
             ]
@@ -502,15 +502,15 @@ class TestResumeExecuteToolError:
         assert "failed" in result.reply.lower() or "try" in result.reply.lower()
 
 
-class TestTestWriterDelegation:
-    async def test_test_writer_gets_read_write_tools(self, mock_db):
-        """Delegating to test-writer provides READ_WRITE_TOOLS (write but no run_command)."""
+class TestCodeWriterDelegation:
+    async def test_code_writer_gets_writer_tools(self, mock_db):
+        """Delegating to code-writer provides WRITER_TOOLS."""
         provider = AsyncMock()
         provider.model_name = "ollama/test-model"
 
         specialist_tools = None
         responses = [
-            _coordinator_delegate_response("test-writer", "write unit tests"),
+            _coordinator_delegate_response("code-writer", "write unit tests"),
             _text_response("Tests written: test_foo.py"),
             _text_response("I wrote the tests for you."),
         ]
@@ -537,7 +537,7 @@ class TestTestWriterDelegation:
                 tools=COORDINATOR_TOOLS,
             )
 
-        assert specialist_tools is READ_WRITE_TOOLS
+        assert specialist_tools is WRITER_TOOLS
 
 
 class TestEmptyReplyFallback:
@@ -631,15 +631,15 @@ class TestDelegateModelValidation:
         from tools.models import Delegate
 
         with pytest.raises(ValidationError):
-            Delegate(skill="code", task="")
+            Delegate(skill="code-writer", task="")
 
     def test_delegate_valid_passes(self):
         """Delegate model accepts valid inputs."""
         from tools.models import Delegate
 
-        d = Delegate(skill="code", task="write a file")
-        assert d.skill == "code"
-        assert d.specialist == "code"  # backward-compat property
+        d = Delegate(skill="code-writer", task="write a file")
+        assert d.skill == "code-writer"
+        assert d.specialist == "code-writer"  # backward-compat property
         assert d.task == "write a file"
         assert d.context == ""
 
@@ -649,7 +649,9 @@ class TestDelegateInExecutor:
         """Delegate tool is handled by agent loop, executor returns informational message."""
         from tools.executor import execute_tool
 
-        result = await execute_tool("delegate", {"skill": "code", "task": "test"}, SessionState())
+        result = await execute_tool(
+            "delegate", {"skill": "code-writer", "task": "test"}, SessionState()
+        )
         assert "agent loop" in result.lower()
 
 
@@ -665,7 +667,7 @@ class TestMultiProviderDelegation:
         # Coordinator delegates, specialist runs, coordinator formats
         coordinator.chat = AsyncMock(
             side_effect=[
-                _coordinator_delegate_response("explore", "list files"),
+                _coordinator_delegate_response("code-writer", "list files"),
                 _text_response("Here are your files."),
             ]
         )
@@ -686,7 +688,7 @@ class TestMultiProviderDelegation:
             )
 
         assert result.reply == "Here are your files."
-        # Specialist provider should have been called (for the explore agent)
+        # Specialist provider should have been called (for the code-writer agent)
         assert specialist.chat.call_count == 1
         # Coordinator should have been called twice (delegate + format)
         assert coordinator.chat.call_count == 2

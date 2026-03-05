@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 from dataclasses import dataclass, field
 
@@ -9,7 +10,7 @@ import db.repository as repo
 from llm.base import LLMProvider
 from store.domain import SessionState
 from tools.executor import build_preview, execute_tool, requires_confirmation
-from tools.registry import COORDINATOR_TOOLS, NO_PROJECT_TOOLS, TOOLS
+from tools.registry import COORDINATOR_TOOLS, NO_PROJECT_TOOLS, WRITER_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class PendingConfirmation:
     messages: list[dict]
     remaining_tool_calls: list[dict] = field(default_factory=list)
     session_state: SessionState = field(default_factory=SessionState)
+    created_at: float = field(default_factory=time.monotonic)
     # Coordinator state for nested confirmation resume (delegation)
     coordinator_messages: list[dict] | None = None
     coordinator_system: str | None = None
@@ -95,7 +97,7 @@ async def run_agent(
         if tools is not None:
             effective_tools = tools
         elif session_state.active_project:
-            effective_tools = TOOLS
+            effective_tools = WRITER_TOOLS
         else:
             effective_tools = NO_PROJECT_TOOLS
 
@@ -443,7 +445,7 @@ async def _process_tool_calls(
             ]
             continue
 
-        if requires_confirmation(tool_name, tool_args):
+        if requires_confirmation(tool_name, tool_args, session_state):
             logger.info("Tool requires confirmation: %s session=%s", tool_name, session_id)
             return AgentResult(
                 reply="",

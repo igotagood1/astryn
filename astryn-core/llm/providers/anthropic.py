@@ -34,12 +34,9 @@ class AnthropicProvider(LLMProvider):
     async def is_available(self) -> bool:
         try:
             client = self._get_client()
-            # A lightweight models list call to verify connectivity
             await client.models.list(limit=1)
-            print("[DIAG] Anthropic API is available", flush=True)
             return True
         except Exception as e:
-            print(f"[DIAG] Anthropic API unavailable: {e}", flush=True)
             logger.warning("Anthropic API unavailable: %s", e)
             return False
 

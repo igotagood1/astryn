@@ -8,7 +8,7 @@ extensions in the ``metadata`` block:
     description: >
       Read, write, and modify files...
     metadata:
-      tools: full          # "full" | "read-write" | "read-only"
+      tools: writer        # "writer" | "reviewer" | "read-only"
       model: ""            # optional preferred Ollama model
     ---
 
@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from tools.registry import READ_ONLY_TOOLS, READ_WRITE_TOOLS, TOOLS
+from tools.registry import READ_ONLY_TOOLS, REVIEWER_TOOLS, WRITER_TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +133,10 @@ def _parse_skill_file(path: Path) -> SkillDef | None:
 def _resolve_tools(tools_key: str) -> list[dict]:
     """Map a tools key to a predefined tool set."""
     match tools_key:
-        case "full":
-            return TOOLS
-        case "read-write":
-            return READ_WRITE_TOOLS
+        case "writer":
+            return WRITER_TOOLS
+        case "reviewer":
+            return REVIEWER_TOOLS
         case "read-only" | _:
             return READ_ONLY_TOOLS
 

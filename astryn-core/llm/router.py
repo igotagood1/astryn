@@ -37,9 +37,7 @@ def get_coordinator_provider() -> LLMProvider:
     ):
         from llm.providers.anthropic import AnthropicProvider
 
-        logger.info(
-            "Coordinator: Anthropic (%s)", settings.astryn_coordinator_model
-        )
+        logger.info("Coordinator: Anthropic (%s)", settings.astryn_coordinator_model)
         return AnthropicProvider(
             api_key=settings.anthropic_api_key.get_secret_value(),
             model=settings.astryn_coordinator_model,

@@ -1,5 +1,6 @@
 import logging
 
+import httpx
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -17,14 +18,14 @@ logger = logging.getLogger(__name__)
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "*Astryn Commands*\n\n"
+        "<b>Astryn Commands</b>\n\n"
         "Just type anything — no /ask needed\n"
         "/projects — Pick a project to work on\n"
         "/clear — Reset conversation history\n"
         "/status — Check if Ollama is running\n"
         "/model — Show and switch models\n"
         "/preferences — Communication style settings",
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -33,6 +34,12 @@ async def cmd_projects(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         projects = await get_projects()
     except CoreError as e:
         await update.message.reply_text(f"❌ {e}")
+        return
+    except httpx.TimeoutException:
+        await update.message.reply_text("⏱️ Request timed out. Please try again.")
+        return
+    except httpx.ConnectError:
+        await update.message.reply_text("🔌 Can't reach the backend. Is astryn-core running?")
         return
     except Exception as e:
         logger.error("Error fetching projects: %s", e)
@@ -57,6 +64,12 @@ async def cmd_clear(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except CoreError as e:
         await update.message.reply_text(f"❌ {e}")
         return
+    except httpx.TimeoutException:
+        await update.message.reply_text("⏱️ Request timed out. Please try again.")
+        return
+    except httpx.ConnectError:
+        await update.message.reply_text("🔌 Can't reach the backend. Is astryn-core running?")
+        return
     except Exception as e:
         logger.error("Error clearing session %s: %s", session_id, e)
         await update.message.reply_text("❌ Something went wrong. Please try again.")
@@ -73,6 +86,10 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     except CoreError as e:
         await update.message.reply_text(f"❌ {e}")
+    except httpx.TimeoutException:
+        await update.message.reply_text("⏱️ Status check timed out.")
+    except httpx.ConnectError:
+        await update.message.reply_text("🔌 Can't reach the backend. Is astryn-core running?")
     except Exception as e:
         logger.error("Error checking status: %s", e)
         await update.message.reply_text("❌ Core unreachable. Please try again.")
@@ -83,6 +100,12 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         data = await list_models()
     except CoreError as e:
         await update.message.reply_text(f"❌ {e}")
+        return
+    except httpx.TimeoutException:
+        await update.message.reply_text("⏱️ Request timed out. Please try again.")
+        return
+    except httpx.ConnectError:
+        await update.message.reply_text("🔌 Can't reach the backend. Is astryn-core running?")
         return
     except Exception as e:
         logger.error("Error fetching models: %s", e)
@@ -105,8 +128,8 @@ async def cmd_model(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     buttons.append([InlineKeyboardButton("📥 Pull model...", callback_data="model_pull_prompt")])
 
     await update.message.reply_text(
-        f"*Models*\n\n{coord_info}\n{spec_info}\n\nInstalled (tap to set as default):",
-        parse_mode="Markdown",
+        f"<b>Models</b>\n\n{coord_info}\n{spec_info}\n\nInstalled (tap to set as default):",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
@@ -133,6 +156,12 @@ async def cmd_preferences(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except CoreError as e:
         await update.message.reply_text(f"❌ {e}")
         return
+    except httpx.TimeoutException:
+        await update.message.reply_text("⏱️ Request timed out. Please try again.")
+        return
+    except httpx.ConnectError:
+        await update.message.reply_text("🔌 Can't reach the backend. Is astryn-core running?")
+        return
     except Exception as e:
         logger.error("Error fetching preferences: %s", e)
         await update.message.reply_text("❌ Something went wrong. Please try again.")
@@ -146,7 +175,7 @@ async def cmd_preferences(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
     await update.message.reply_text(
-        "*Communication Preferences*\n\nTap a setting to change it:",
-        parse_mode="Markdown",
+        "<b>Communication Preferences</b>\n\nTap a setting to change it:",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(buttons),
     )

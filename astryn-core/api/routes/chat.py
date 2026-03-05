@@ -1,4 +1,5 @@
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,24 +14,35 @@ from db.engine import get_db
 from llm.agent import run_agent
 from llm.base import ProviderUnavailable
 from llm.router import get_coordinator_provider, get_fallback_provider, get_specialist_provider
-from store.domain import pending_confirmations
+from store.domain import cleanup_expired_confirmations, pending_confirmations
 from tools.registry import COORDINATOR_TOOLS
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Cache provider availability to avoid per-request API calls (~200-500ms each)
+_availability_cache: dict[str, tuple[bool, float]] = {}
+_AVAILABILITY_TTL = 60  # seconds
+
+
+async def _is_available_cached(provider) -> bool:
+    """Check provider availability with a 60-second cache."""
+    key = provider.model_name
+    now = time.monotonic()
+    cached = _availability_cache.get(key)
+    if cached and (now - cached[1]) < _AVAILABILITY_TTL:
+        return cached[0]
+    result = await provider.is_available()
+    _availability_cache[key] = (result, now)
+    return result
+
 
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
-    # Logging diagnostics — remove once logging is fixed
-    import sys
-    root = logging.getLogger()
-    print(f"[DIAG] POST /chat received: session={req.session_id}", flush=True)
-    print(f"[DIAG] Root logger: level={root.level} handlers={root.handlers}", flush=True)
-    print(f"[DIAG] Chat logger: level={logger.level} effective={logger.getEffectiveLevel()} propagate={logger.propagate} handlers={logger.handlers}", flush=True)
-    print(f"[DIAG] sys.stderr={sys.stderr} sys.stdout={sys.stdout}", flush=True)
     logger.info("POST /chat received: session=%s", req.session_id)
+    cleanup_expired_confirmations()
+
     try:
         state = await session_service.ensure_session(db, req.session_id)
     except SQLAlchemyError as exc:
@@ -42,24 +54,19 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
     coordinator = get_coordinator_provider()
     specialist = get_specialist_provider()
-    print(f"[DIAG] coordinator={coordinator.model_name}", flush=True)
 
     # Budget check: if Anthropic budget is exhausted, fall back to Ollama
     if coordinator.model_name.startswith(
         "anthropic/"
     ) and not await budget_service.can_use_anthropic(db):
-        print("[DIAG] Anthropic budget exhausted, falling back to Ollama", flush=True)
         logger.info("Anthropic budget exhausted, falling back to Ollama")
         coordinator = get_fallback_provider()
 
-    available = await coordinator.is_available()
-    print(f"[DIAG] coordinator.is_available()={available}", flush=True)
+    available = await _is_available_cached(coordinator)
 
     if not available:
-        # If coordinator is Anthropic and unavailable, try Ollama fallback
         fallback = get_fallback_provider()
-        if fallback.model_name != coordinator.model_name and await fallback.is_available():
-            print(f"[DIAG] Falling back to {fallback.model_name}", flush=True)
+        if fallback.model_name != coordinator.model_name and await _is_available_cached(fallback):
             logger.warning("Coordinator unavailable, falling back to %s", fallback.model_name)
             coordinator = fallback
         else:
@@ -67,7 +74,6 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                 status_code=503, detail="LLM provider is not available. Is Ollama running?"
             )
 
-    print(f"[DIAG] Using model: {coordinator.model_name}", flush=True)
     logger.info("Chat request: session=%s model=%s", req.session_id, coordinator.model_name)
 
     try:

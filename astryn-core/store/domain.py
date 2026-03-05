@@ -67,3 +67,20 @@ class ApiUsageRecord:
 # write/exec tool and removed when the user approves or rejects via POST /confirm.
 # Intentionally not persisted — confirmations expire on restart.
 pending_confirmations: dict[str, PendingConfirmation] = {}
+
+_CONFIRMATION_TTL = 600  # 10 minutes
+
+
+def cleanup_expired_confirmations() -> list[str]:
+    """Remove confirmations older than TTL. Returns list of expired IDs."""
+    import time
+
+    now = time.monotonic()
+    expired = [
+        cid
+        for cid, pc in pending_confirmations.items()
+        if (now - pc.created_at) > _CONFIRMATION_TTL
+    ]
+    for cid in expired:
+        del pending_confirmations[cid]
+    return expired

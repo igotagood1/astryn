@@ -46,9 +46,8 @@ class TestBuildCoordinatorPrompt:
     def test_contains_available_skills(self):
         prompt = build_coordinator_prompt(SessionState())
         assert "<available_skills>" in prompt
-        assert "code" in prompt
-        assert "explore" in prompt
-        assert "plan" in prompt
+        assert "code-writer" in prompt
+        assert "code-reviewer" in prompt
 
     def test_contains_critical_output_rule(self):
         prompt = build_coordinator_prompt(SessionState())

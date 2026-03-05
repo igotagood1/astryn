@@ -10,6 +10,8 @@ from store.domain import SessionState
 from tools.models import (
     AnyTool,
     ApplyDiff,
+    CommitChanges,
+    CreateBranch,
     CreateProject,
     Delegate,
     GrepFiles,
@@ -169,6 +171,91 @@ async def run_command(command: str, active_project: str | None = None) -> str:
         return f"Error running command: {e}"
 
 
+_BRANCH_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/\-]*$")
+
+
+async def create_branch(name: str, active_project: str | None = None) -> str:
+    if not active_project:
+        return "No project is active. Use set_project first."
+    if ".." in name:
+        return f"Invalid branch name '{name}': '..' is not allowed."
+    if not _BRANCH_NAME_RE.match(name):
+        return (
+            f"Invalid branch name '{name}'. "
+            "Use letters, numbers, hyphens, underscores, dots, and slashes. "
+            "Must start with a letter or number."
+        )
+    cwd = str(validate_path(".", active_project))
+    try:
+        result = subprocess.run(
+            ["git", "checkout", "-b", name],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return f"Failed to create branch: {result.stderr.strip()}"
+        return f"Created and switched to branch '{name}'."
+    except subprocess.TimeoutExpired:
+        return "Branch creation timed out."
+    except OSError as e:
+        return f"Error creating branch: {e}"
+
+
+async def commit_changes(message: str, files: list[str], active_project: str | None = None) -> str:
+    if not active_project:
+        return "No project is active. Use set_project first."
+    cwd = str(validate_path(".", active_project))
+
+    # Validate file paths for security
+    for f in files:
+        validate_path(f, active_project)
+
+    # Stage files
+    try:
+        if files:
+            stage_result = subprocess.run(
+                ["git", "add", "--", *files],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        else:
+            stage_result = subprocess.run(
+                ["git", "add", "-A"],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        if stage_result.returncode != 0:
+            return f"Failed to stage files: {stage_result.stderr.strip()}"
+    except subprocess.TimeoutExpired:
+        return "Staging timed out."
+    except OSError as e:
+        return f"Error staging files: {e}"
+
+    # Commit
+    try:
+        commit_result = subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output = (commit_result.stdout + commit_result.stderr).strip()
+        if commit_result.returncode != 0:
+            return f"Commit failed: {output}"
+        return f"Committed: {output}"
+    except subprocess.TimeoutExpired:
+        return "Commit timed out."
+    except OSError as e:
+        return f"Error committing: {e}"
+
+
 async def search_files(pattern: str, path: str = ".", active_project: str | None = None) -> str:
     if not active_project:
         return "No project is active. Use set_project first."
@@ -281,6 +368,10 @@ async def execute_tool(
                 return await search_files(pattern, path, active_project)
             case GrepFiles(pattern=pattern, include=include):
                 return await grep_files(pattern, include, active_project)
+            case CreateBranch(name=name):
+                return await create_branch(name, active_project)
+            case CommitChanges(message=message, files=files):
+                return await commit_changes(message, files, active_project)
             case Delegate():
                 return "delegate is handled by the agent loop, not the executor."
             case _:
@@ -290,7 +381,9 @@ async def execute_tool(
         return f"Security error: {e} Use a relative path within the active project."
 
 
-def requires_confirmation(tool_name: str, tool_args: dict) -> bool:
+def requires_confirmation(
+    tool_name: str, tool_args: dict, session_state: SessionState | None = None
+) -> bool:
     """Return True if this tool call needs user confirmation before executing.
 
     Delegates to the tool's registry entry so the logic is co-located with
@@ -300,7 +393,7 @@ def requires_confirmation(tool_name: str, tool_args: dict) -> bool:
     if not tool:
         return True  # unknown tools always require confirmation
     if callable(tool.requires_confirmation):
-        return tool.requires_confirmation(tool_args)
+        return tool.requires_confirmation(tool_args, session_state)
     return bool(tool.requires_confirmation)
 
 
@@ -309,8 +402,13 @@ def build_preview(tool_name: str, tool_args: dict) -> str:
 
     Used in the Telegram confirmation prompt. Delegates to the tool's
     registry entry so preview logic stays co-located with the tool definition.
+    Truncates long previews to keep within Telegram's message limit so
+    confirmation buttons stay attached to the message.
     """
     tool = REGISTRY.get(tool_name)
     if tool and tool.build_preview:
-        return tool.build_preview(tool_args)
+        preview = tool.build_preview(tool_args)
+        if len(preview) > 3000:
+            preview = preview[:3000] + "\n\n...[truncated]"
+        return preview
     return f"Execute `{tool_name}` with args: {tool_args}"

@@ -1,15 +1,18 @@
 import asyncio
 import contextlib
 import logging
+import re
 from difflib import get_close_matches
 from typing import TypedDict  # used for _ChatResult
 
+import httpx
 import telegram.error
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
 
 import config
 from core_client import CoreError, send_message
+from formatting import markdown_to_telegram_html, strip_markdown
 from handlers.commands import (
     cmd_clear,
     cmd_help,
@@ -88,6 +91,16 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except CoreError as e:
         typing_task.cancel()
         await update.message.reply_text(f"❌ {e}")
+    except httpx.TimeoutException:
+        typing_task.cancel()
+        await update.message.reply_text(
+            "⏱️ Response timed out. The model may be overloaded — try again in a moment."
+        )
+    except httpx.ConnectError:
+        typing_task.cancel()
+        await update.message.reply_text(
+            "🔌 Can't reach the backend. Is astryn-core running?"
+        )
     except Exception as e:
         typing_task.cancel()
         logger.error("Error handling message for session %s: %s", session_id, e)
@@ -138,7 +151,7 @@ async def _send_result(message: Message, result: _ChatResult):
                     ],
                     [
                         InlineKeyboardButton(
-                            "💬 More context",
+                            "✏️ Request changes",
                             callback_data=f"confirm:{action['id']}:context",
                         ),
                     ],
@@ -160,8 +173,9 @@ async def _send_result(message: Message, result: _ChatResult):
 def _split_message(text: str, max_len: int = 4096) -> list[str]:
     """Split text into chunks respecting newlines and code block boundaries.
 
-    When a split occurs inside a fenced code block (```), the current chunk
-    gets a closing fence and the next chunk reopens with the same language tag.
+    Handles both HTML <pre> tags and markdown ``` fences. When a split
+    occurs inside a code block, the current chunk gets a closing tag and
+    the next chunk reopens it.
     """
     if len(text) <= max_len:
         return [text]
@@ -169,7 +183,7 @@ def _split_message(text: str, max_len: int = 4096) -> list[str]:
     chunks: list[str] = []
     remaining = text
     in_code_block = False
-    lang_tag = ""
+    code_open_tag = ""
 
     while remaining:
         if len(remaining) <= max_len:
@@ -186,21 +200,33 @@ def _split_message(text: str, max_len: int = 4096) -> list[str]:
             chunk = remaining[:split_at]
             remaining = remaining[split_at + 1 :]  # skip the newline
 
-        # Track code fence state within this chunk
+        # Track code block state within this chunk
         for line in chunk.split("\n"):
             stripped = line.strip()
+            if not in_code_block and ("<pre>" in stripped or "<pre><code" in stripped):
+                in_code_block = True
+                pre_match = re.search(r"(<pre>(?:<code[^>]*>)?)", stripped)
+                code_open_tag = pre_match.group(1) if pre_match else "<pre>"
+            if "</pre>" in stripped or "</code></pre>" in stripped:
+                in_code_block = False
+                code_open_tag = ""
             if stripped.startswith("```"):
                 if not in_code_block:
                     in_code_block = True
-                    lang_tag = stripped[3:].strip()
+                    lang = stripped[3:].strip()
+                    code_open_tag = f"```{lang}" if lang else "```"
                 else:
                     in_code_block = False
-                    lang_tag = ""
+                    code_open_tag = ""
 
         if in_code_block:
-            # Close the fence in this chunk, reopen in next
-            chunk += "\n```"
-            remaining = f"```{lang_tag}\n{remaining}"
+            if code_open_tag.startswith("<pre>"):
+                close = "</code></pre>" if "<code" in code_open_tag else "</pre>"
+                chunk += f"\n{close}"
+                remaining = f"{code_open_tag}\n{remaining}"
+            else:
+                chunk += "\n```"
+                remaining = f"{code_open_tag}\n{remaining}"
 
         chunks.append(chunk)
 
@@ -210,14 +236,20 @@ def _split_message(text: str, max_len: int = 4096) -> list[str]:
 async def _send_chunked(message: Message, text: str, reply_markup=None):
     """Split long text into Telegram's 4096-char limit and send each chunk.
 
-    Attaches reply_markup to the last chunk only. Falls back to plain text
-    if Markdown parsing fails for a chunk (e.g. unbalanced backticks).
+    Converts markdown to Telegram HTML. Falls back to stripped plain text
+    if HTML parsing fails.
     """
-    chunks = _split_message(text)
+    html_text = markdown_to_telegram_html(text)
+    chunks = _split_message(html_text)
     for i, chunk in enumerate(chunks):
         markup = reply_markup if i == len(chunks) - 1 else None
         try:
-            await message.reply_text(chunk, parse_mode="Markdown", reply_markup=markup)
+            await message.reply_text(chunk, parse_mode="HTML", reply_markup=markup)
         except telegram.error.BadRequest:
-            logger.debug("Markdown parse failed for chunk, falling back to plain text")
-            await message.reply_text(chunk, reply_markup=markup)
+            logger.debug("HTML parse failed for chunk, falling back to plain text")
+            plain = strip_markdown(text) if i == 0 else strip_markdown(chunk)
+            plain_chunks = _split_message(plain)
+            for j, pc in enumerate(plain_chunks):
+                m = markup if j == len(plain_chunks) - 1 else None
+                await message.reply_text(pc, reply_markup=m)
+            break
