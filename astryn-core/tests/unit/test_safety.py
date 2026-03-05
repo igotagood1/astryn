@@ -96,14 +96,13 @@ class TestValidateCommand:
 
     # -- Confirmation commands --
 
-    def test_git_add_needs_confirmation(self):
-        needs_confirm, reason = validate_command("git add .")
-        assert needs_confirm is True
-        assert reason == "confirmation"
+    def test_git_add_blocked(self):
+        with pytest.raises(SecurityError, match="not on the allowed list"):
+            validate_command("git add .")
 
-    def test_git_commit_needs_confirmation(self):
-        needs_confirm, _ = validate_command("git commit -m 'test'")
-        assert needs_confirm is True
+    def test_git_commit_blocked(self):
+        with pytest.raises(SecurityError, match="not on the allowed list"):
+            validate_command("git commit -m 'test'")
 
     def test_git_checkout_needs_confirmation(self):
         needs_confirm, _ = validate_command("git checkout main")

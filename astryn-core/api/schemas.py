@@ -30,6 +30,7 @@ class ChatResponse(BaseModel):
     reply: str
     model: str
     action: ConfirmationAction | None = None
+    fallback_from: str | None = None
 
 
 class ConfirmRequest(BaseModel):
@@ -49,3 +50,25 @@ class SetProjectRequest(BaseModel):
 
     name: str
     session_id: str = "default"
+
+
+class PreferencesResponse(BaseModel):
+    """Current communication preferences for a session."""
+
+    verbosity: str
+    tone: str
+    code_explanation: str
+    proactive_suggestions: bool
+
+
+class UpdatePreferenceRequest(BaseModel):
+    """Request to update a single communication preference."""
+
+    field: str
+    value: str | bool
+
+
+class PullModelRequest(BaseModel):
+    """Request to pull a model from the Ollama registry."""
+
+    model: str

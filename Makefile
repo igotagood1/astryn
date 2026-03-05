@@ -11,8 +11,10 @@ start: _ensure-model
 start-detached: _ensure-model
 	docker compose up -d
 
-## dev: Start with hot reload — core restarts on file changes, edit telegram then `make restart-telegram`
+## dev: Clean rebuild and start with hot reload — fresh images and volumes every time
 dev: _ensure-model
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml build --no-cache
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 ## restart-telegram: Restart the telegram bot container to pick up code changes (dev only)

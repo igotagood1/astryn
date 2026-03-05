@@ -5,6 +5,20 @@ class ListProjects(BaseModel):
     """List all available projects in ~/repos."""
 
 
+class CreateProject(BaseModel):
+    """Create a new project directory in ~/repos and set it as active.
+
+    Creates the folder, initializes a git repository, and switches to it.
+    """
+
+    name: str = Field(
+        min_length=1,
+        description=(
+            "Name for the new project (e.g., 'my-new-app'). Letters, numbers, hyphens, underscores."
+        ),
+    )
+
+
 class SetProject(BaseModel):
     """Set the active project for this session.
 
@@ -48,8 +62,7 @@ class WriteFile(BaseModel):
     """Write full content to a file (creates or overwrites).
 
     Use for new files or when apply_diff would cover the entire file.
-    ALWAYS explain what you're writing and why before calling this.
-    Requires confirmation.
+    New files are created immediately. Overwriting existing files requires confirmation.
     """
 
     path: str = Field(description="Relative path from project root")
@@ -96,8 +109,52 @@ class GrepFiles(BaseModel):
     )
 
 
+class CreateBranch(BaseModel):
+    """Create a new git branch in the active project and switch to it."""
+
+    name: str = Field(min_length=1, description="Branch name (e.g., 'feature/add-auth')")
+
+
+class CommitChanges(BaseModel):
+    """Stage files and commit changes in the active project.
+
+    Used after code review to commit approved changes. Requires confirmation.
+    """
+
+    message: str = Field(min_length=1, description="Commit message")
+    files: list[str] = Field(
+        default_factory=list,
+        description="Files to stage. Empty list stages all changes (git add -A).",
+    )
+
+
+class Delegate(BaseModel):
+    """Delegate a task to a specialist skill.
+
+    Use this when the user's request requires file access, code changes,
+    or deep exploration. The skill runs with its own tools and context,
+    then returns its result to you for formatting.
+    """
+
+    skill: str = Field(
+        min_length=1,
+        description="Which skill to use (e.g., 'code', 'explore', 'plan')",
+    )
+    task: str = Field(min_length=1, description="Clear task description for the specialist")
+    context: str = Field(
+        default="",
+        description="Relevant file paths, error messages, or constraints from the conversation",
+    )
+
+    @property
+    def specialist(self) -> str:
+        """Backward-compat alias for skill."""
+        return self.skill
+
+
 type AnyTool = (
     ListProjects
+    | CreateProject
     | SetProject
     | ListFiles
     | ReadFile
@@ -106,6 +163,9 @@ type AnyTool = (
     | RunCommand
     | SearchFiles
     | GrepFiles
+    | CreateBranch
+    | CommitChanges
+    | Delegate
 )
 
 
@@ -118,6 +178,8 @@ def parse_tool(name: str, args: dict) -> AnyTool:
     match name:
         case "list_projects":
             return ListProjects.model_validate(args)
+        case "create_project":
+            return CreateProject.model_validate(args)
         case "set_project":
             return SetProject.model_validate(args)
         case "list_files":
@@ -134,5 +196,14 @@ def parse_tool(name: str, args: dict) -> AnyTool:
             return SearchFiles.model_validate(args)
         case "grep_files":
             return GrepFiles.model_validate(args)
+        case "create_branch":
+            return CreateBranch.model_validate(args)
+        case "commit_changes":
+            return CommitChanges.model_validate(args)
+        case "delegate":
+            # Accept both "skill" (new) and "specialist" (legacy) field names
+            if "specialist" in args and "skill" not in args:
+                args = {**args, "skill": args.pop("specialist")}
+            return Delegate.model_validate(args)
         case _:
             raise ValueError(f"Unknown tool: {name!r}")

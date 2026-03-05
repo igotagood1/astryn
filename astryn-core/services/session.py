@@ -11,8 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import db.repository as repo
 from llm.config import settings
+from llm.skills import format_available_skills_block, load_skill_metadata
+from prompts.coordinator import COORDINATOR_PROMPT_TEMPLATE
 from prompts.system import SYSTEM_PROMPT
-from store.domain import SessionState, pending_confirmations
+from services.preferences import format_preferences_block
+from store.domain import (
+    CommunicationPreferences,
+    SessionState,
+    cancel_events,
+    pending_confirmations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +66,12 @@ async def update_state(db: AsyncSession, session_id: str, state: SessionState) -
 
 
 async def clear(db: AsyncSession, session_id: str) -> None:
-    """Delete messages, reset state, and clean up pending confirmations."""
+    """Delete messages, reset state, cancel in-flight requests, and clean up."""
+    # Signal cancellation to any in-flight agent loop
+    if session_id in cancel_events:
+        cancel_events[session_id].set()
+        del cancel_events[session_id]
+
     await repo.clear_session(db, session_id)
 
     stale_ids = [k for k, v in pending_confirmations.items() if v.session_id == session_id]
@@ -84,6 +97,48 @@ def _is_stale(state: SessionState) -> bool:
     if last.tzinfo is None:
         last = last.replace(tzinfo=UTC)
     return (now - last) > _STALE_SESSION_THRESHOLD
+
+
+def build_coordinator_prompt(
+    state: SessionState,
+    prefs: CommunicationPreferences | None = None,
+) -> str:
+    """Assemble the coordinator system prompt with preferences, skills, and session state."""
+    if prefs is None:
+        prefs = CommunicationPreferences()
+
+    preferences_block = format_preferences_block(prefs)
+    session_state_block = _build_session_state_block(state)
+    skills_metadata = load_skill_metadata()
+    available_skills_block = format_available_skills_block(skills_metadata)
+
+    return COORDINATOR_PROMPT_TEMPLATE.format(
+        preferences_block=preferences_block,
+        session_state_block=session_state_block,
+        available_skills_block=available_skills_block,
+    )
+
+
+def _build_session_state_block(state: SessionState) -> str:
+    """Build the session state section for prompt injection."""
+    if state.active_project:
+        stale_note = ""
+        if _is_stale(state):
+            stale_note = (
+                " (set from a previous conversation — if the user seems to be "
+                "asking about something unrelated, ask if they want to switch)"
+            )
+        return (
+            f"## Current Session State\n\n"
+            f"Active project: {state.active_project}{stale_note}\n"
+            f"The specialist agents have full access to this project's files."
+        )
+    return (
+        "## Current Session State\n\n"
+        "No project is selected yet. When delegating, the specialist can use "
+        "list_projects and set_project to find and select a project.\n"
+        "If the user mentions a project by name, include it in the delegation context."
+    )
 
 
 def build_system_prompt(state: SessionState) -> str:

@@ -11,6 +11,18 @@ from tools.executor import (
 )
 
 
+def _git_env(tmp_path):
+    """Minimal env for git commits in test repos."""
+    return {
+        "GIT_AUTHOR_NAME": "test",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "test",
+        "GIT_COMMITTER_EMAIL": "t@t",
+        "HOME": str(tmp_path),
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin",
+    }
+
+
 @contextmanager
 def _patch_repos_root(tmp_path):
     """Patch REPOS_ROOT in both executor and safety modules."""
@@ -22,8 +34,37 @@ def _patch_repos_root(tmp_path):
 
 
 class TestRequiresConfirmation:
-    def test_write_file_always_confirms(self):
+    def test_write_file_new_file_no_confirm(self, tmp_path):
+        """Writing a new file (doesn't exist yet) should not require confirmation."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        state = SessionState(active_project="proj")
+        with _patch_repos_root(tmp_path):
+            assert (
+                requires_confirmation("write_file", {"path": "new.py", "content": "y"}, state)
+                is False
+            )
+
+    def test_write_file_existing_file_confirms(self, tmp_path):
+        """Overwriting an existing file should require confirmation."""
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        (proj / "existing.py").write_text("old content")
+        state = SessionState(active_project="proj")
+        with _patch_repos_root(tmp_path):
+            assert (
+                requires_confirmation("write_file", {"path": "existing.py", "content": "y"}, state)
+                is True
+            )
+
+    def test_write_file_no_session_state_confirms(self):
+        """No session state → always confirm (safe fallback)."""
         assert requires_confirmation("write_file", {"path": "x", "content": "y"}) is True
+
+    def test_write_file_no_active_project_confirms(self):
+        """No active project → always confirm (safe fallback)."""
+        state = SessionState()
+        assert requires_confirmation("write_file", {"path": "x", "content": "y"}, state) is True
 
     def test_apply_diff_always_confirms(self):
         args = {"path": "x", "old_str": "a", "new_str": "b"}
@@ -48,10 +89,16 @@ class TestRequiresConfirmation:
         assert requires_confirmation("run_command", {"command": "git status"}) is False
 
     def test_run_command_confirmation(self):
-        assert requires_confirmation("run_command", {"command": "git add ."}) is True
+        assert requires_confirmation("run_command", {"command": "git checkout main"}) is True
 
     def test_unknown_tool_confirms(self):
         assert requires_confirmation("unknown_tool", {}) is True
+
+    def test_create_branch_no_confirm(self):
+        assert requires_confirmation("create_branch", {"name": "feat/test"}) is False
+
+    def test_commit_changes_always_confirms(self):
+        assert requires_confirmation("commit_changes", {"message": "fix", "files": []}) is True
 
 
 class TestBuildPreview:
@@ -67,8 +114,21 @@ class TestBuildPreview:
         assert "new" in preview
 
     def test_run_command_preview(self):
-        preview = build_preview("run_command", {"command": "git commit -m 'fix'"})
-        assert "git commit" in preview
+        preview = build_preview("run_command", {"command": "git checkout main"})
+        assert "git checkout" in preview
+
+    def test_commit_changes_preview(self):
+        preview = build_preview(
+            "commit_changes", {"message": "fix: typo", "files": ["main.py", "utils.py"]}
+        )
+        assert "fix: typo" in preview
+        assert "main.py" in preview
+        assert "utils.py" in preview
+
+    def test_commit_changes_preview_all_files(self):
+        preview = build_preview("commit_changes", {"message": "fix: typo", "files": []})
+        assert "fix: typo" in preview
+        assert "(all changes)" in preview
 
     def test_unknown_tool_fallback(self):
         preview = build_preview("unknown", {"foo": "bar"})
@@ -129,6 +189,176 @@ class TestExecuteTool:
                 {"path": "/etc/passwd"},
                 SessionState(active_project="proj"),
             )
+        assert "Security error" in result
+
+
+class TestCreateProject:
+    async def test_creates_directory(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": "my-project"}, state)
+        assert (tmp_path / "my-project").is_dir()
+        assert state.active_project == "my-project"
+        assert "Created" in result
+
+    async def test_initializes_git(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            await execute_tool("create_project", {"name": "git-proj"}, state)
+        assert (tmp_path / "git-proj" / ".git").is_dir()
+
+    async def test_existing_project_rejected(self, tmp_path):
+        (tmp_path / "existing").mkdir()
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": "existing"}, state)
+        assert "already exists" in result
+        assert state.active_project is None
+
+    async def test_invalid_name_rejected(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": "../escape"}, state)
+        assert "Invalid" in result
+        assert state.active_project is None
+
+    async def test_slash_in_name_rejected(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": "foo/bar"}, state)
+        assert "Invalid" in result
+
+    async def test_dot_start_rejected(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": ".hidden"}, state)
+        assert "Invalid" in result
+
+    async def test_no_confirmation_required(self):
+        assert requires_confirmation("create_project", {"name": "test"}) is False
+
+
+class TestCreateBranch:
+    async def test_creates_branch(self, tmp_path):
+        import subprocess
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=str(proj),
+            capture_output=True,
+            env=_git_env(tmp_path),
+        )
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "create_branch", {"name": "feat/new"}, SessionState(active_project="proj")
+            )
+
+        assert "Created" in result
+        assert "feat/new" in result
+
+    async def test_no_project_error(self):
+        result = await execute_tool("create_branch", {"name": "test"}, SessionState())
+        assert "No project is active" in result
+
+    async def test_invalid_name_dotdot(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "create_branch", {"name": "a/../b"}, SessionState(active_project="proj")
+            )
+        assert "Invalid" in result
+
+    async def test_invalid_name_special_chars(self, tmp_path):
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "create_branch", {"name": "bad;name"}, SessionState(active_project="proj")
+            )
+        assert "Invalid" in result
+
+    def test_no_confirmation_required(self):
+        assert requires_confirmation("create_branch", {"name": "feat/test"}) is False
+
+
+class TestCommitChanges:
+    async def test_commits_all_changes(self, tmp_path):
+        import subprocess
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=str(proj),
+            capture_output=True,
+            env=_git_env(tmp_path),
+        )
+        (proj / "hello.py").write_text("print('hi')")
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "commit_changes",
+                {"message": "add hello", "files": []},
+                SessionState(active_project="proj"),
+            )
+
+        assert "Committed" in result
+
+    async def test_commits_specific_files(self, tmp_path):
+        import subprocess
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=str(proj),
+            capture_output=True,
+            env=_git_env(tmp_path),
+        )
+        (proj / "a.py").write_text("a")
+        (proj / "b.py").write_text("b")
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "commit_changes",
+                {"message": "add a", "files": ["a.py"]},
+                SessionState(active_project="proj"),
+            )
+
+        assert "Committed" in result
+
+    async def test_no_project_error(self):
+        result = await execute_tool(
+            "commit_changes",
+            {"message": "test", "files": []},
+            SessionState(),
+        )
+        assert "No project is active" in result
+
+    async def test_always_requires_confirmation(self):
+        assert requires_confirmation("commit_changes", {"message": "x", "files": []}) is True
+
+    async def test_path_traversal_blocked(self, tmp_path):
+        import subprocess
+
+        proj = tmp_path / "proj"
+        proj.mkdir()
+        subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
+
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool(
+                "commit_changes",
+                {"message": "bad", "files": ["../../etc/passwd"]},
+                SessionState(active_project="proj"),
+            )
+
         assert "Security error" in result
 
 

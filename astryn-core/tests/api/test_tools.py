@@ -31,7 +31,8 @@ class TestConfirmEndpoint:
         )
 
         with (
-            patch("api.routes.tools.get_provider", return_value=mock_provider),
+            patch("api.routes.tools.get_specialist_provider", return_value=mock_provider),
+            patch("api.routes.tools.get_coordinator_provider", return_value=mock_provider),
             patch(
                 "api.routes.tools.resume_agent",
                 new_callable=AsyncMock,
@@ -61,7 +62,8 @@ class TestConfirmEndpoint:
         )
 
         with (
-            patch("api.routes.tools.get_provider", return_value=mock_provider),
+            patch("api.routes.tools.get_specialist_provider", return_value=mock_provider),
+            patch("api.routes.tools.get_coordinator_provider", return_value=mock_provider),
             patch(
                 "api.routes.tools.resume_agent",
                 new_callable=AsyncMock,

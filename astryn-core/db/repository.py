@@ -17,12 +17,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
+    CommunicationPreferencesModel,
     MessageModel,
     SessionModel,
     SessionStateModel,
     ToolAuditModel,
 )
-from store.domain import SessionState
+from store.domain import CommunicationPreferences, SessionState
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,53 @@ async def update_state(db: AsyncSession, external_id: str, state: SessionState) 
         db.add(state_row)
 
     state_row.active_project = state.active_project
+    await db.flush()
+
+
+# ── Preferences operations ───────────────────────────────────────────────────
+
+
+async def get_preferences(db: AsyncSession, external_id: str) -> CommunicationPreferences:
+    """Load communication preferences for a session, returning defaults if none exist."""
+    session = await _resolve_session(db, external_id)
+    result = await db.execute(
+        select(CommunicationPreferencesModel).where(
+            CommunicationPreferencesModel.session_id == session.id
+        )
+    )
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        return CommunicationPreferences()
+
+    return CommunicationPreferences(
+        verbosity=row.verbosity,
+        tone=row.tone,
+        code_explanation=row.code_explanation,
+        proactive_suggestions=row.proactive_suggestions,
+    )
+
+
+async def update_preferences(
+    db: AsyncSession, external_id: str, prefs: CommunicationPreferences
+) -> None:
+    """Persist communication preferences for a session."""
+    session = await _resolve_session(db, external_id)
+    result = await db.execute(
+        select(CommunicationPreferencesModel).where(
+            CommunicationPreferencesModel.session_id == session.id
+        )
+    )
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        row = CommunicationPreferencesModel(session_id=session.id)
+        db.add(row)
+
+    row.verbosity = prefs.verbosity
+    row.tone = prefs.tone
+    row.code_explanation = prefs.code_explanation
+    row.proactive_suggestions = prefs.proactive_suggestions
     await db.flush()
 
 
@@ -237,3 +285,40 @@ async def clear_session(db: AsyncSession, external_id: str) -> None:
 
     await db.flush()
     logger.info("Cleared session: external_id=%s", external_id)
+
+
+# ── API Usage ─────────────────────────────────────────────────────────────────
+
+
+async def record_api_usage(
+    db: AsyncSession,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    estimated_cost_usd,
+    session_id: str | None = None,
+) -> None:
+    """Record an Anthropic API usage entry. Fire-and-forget safe."""
+    from db.models import ApiUsageModel
+
+    row = ApiUsageModel(
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        estimated_cost_usd=estimated_cost_usd,
+        session_id=session_id,
+    )
+    db.add(row)
+    await db.flush()
+
+
+async def get_usage_since(db: AsyncSession, since: datetime) -> list:
+    """Return all API usage records created since the given datetime."""
+    from db.models import ApiUsageModel
+
+    result = await db.execute(
+        select(ApiUsageModel)
+        .where(ApiUsageModel.created_at >= since)
+        .order_by(ApiUsageModel.created_at)
+    )
+    return list(result.scalars().all())

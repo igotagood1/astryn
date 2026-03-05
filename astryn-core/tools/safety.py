@@ -19,7 +19,7 @@ IMMEDIATE_COMMANDS: dict[str, list[str] | None] = {
 
 # Commands that require confirmation before running
 CONFIRMATION_COMMANDS: dict[str, list[str] | None] = {
-    "git": ["add", "commit", "checkout", "stash pop", "stash drop", "stash"],
+    "git": ["checkout", "stash pop", "stash drop", "stash"],
     "npm": ["run"],
 }
 

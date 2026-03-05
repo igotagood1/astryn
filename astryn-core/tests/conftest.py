@@ -11,6 +11,8 @@ os.environ.setdefault("ASTRYN_API_KEY", "test-key")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://fake:fake@localhost/fake")
 os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434")
 os.environ.setdefault("ASTRYN_DEFAULT_MODEL", "test-model")
+os.environ.setdefault("ASTRYN_COORDINATOR_PROVIDER", "ollama")
+os.environ.setdefault("ASTRYN_SPECIALIST_MODEL", "test-model")
 
 from unittest.mock import AsyncMock
 
@@ -18,19 +20,21 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from llm.base import LLMResponse
-from store.domain import pending_confirmations
+from store.domain import cancel_events, pending_confirmations
 
 
 @pytest.fixture(autouse=True)
 def _clear_global_state():
     """Reset in-memory global state between tests."""
     pending_confirmations.clear()
+    cancel_events.clear()
     # Reset active model to default
     from llm import router
 
     router._active_model = "test-model"
     yield
     pending_confirmations.clear()
+    cancel_events.clear()
 
 
 @pytest.fixture

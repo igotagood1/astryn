@@ -33,6 +33,7 @@ services:
       - "8000:8000"
     env_file: ./astryn-core/.env
     environment:
+      - PYTHONUNBUFFERED=1
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
       - DATABASE_URL=postgresql+asyncpg://astryn:${POSTGRES_PASSWORD:-astryn}@postgres:5432/astryn
     extra_hosts:

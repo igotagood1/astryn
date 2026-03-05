@@ -15,6 +15,6 @@ def verify_api_key(x_api_key: str = Header(...)) -> None:
 
     Raises HTTP 401 if the key is missing or incorrect.
     """
-    if x_api_key != settings.astryn_api_key:
+    if x_api_key != settings.astryn_api_key.get_secret_value():
         logger.warning("Rejected request with invalid API key")
         raise HTTPException(status_code=401, detail="Invalid API key")
