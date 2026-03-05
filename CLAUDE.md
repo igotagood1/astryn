@@ -50,18 +50,20 @@ Always do this before committing — if a package is imported but missing from `
 
 ### astryn-core
 - `api/main.py` — FastAPI app, mounts routers
-- `api/routes/chat.py` — `POST /chat` (coordinator mode), `DELETE /chat/{session_id}`. Budget check + Anthropic fallback logic.
+- `api/routes/chat.py` — `POST /chat` (coordinator mode), `DELETE /chat/{session_id}`. Per-session locking (409 on concurrent access), orphaned confirmation cleanup, cancellation events, budget check + Anthropic fallback logic.
+- `api/routes/stream.py` — `POST /chat/stream` SSE endpoint. Streams `text_delta`, `tool_start`, `tool_result`, `status`, `done`, `error` events via `asyncio.Queue`.
 - `api/routes/preferences.py` — `GET/POST /preferences/{session_id}` for communication style
 - `api/routes/health.py` — `GET /health`, pings Ollama
 - `api/routes/models.py` — `GET /models`, `POST /models/active`
 - `api/routes/projects.py` — `GET /projects`, `POST /projects/active`, `DELETE /projects/active`
 - `api/routes/tools.py` — `POST /confirm/{id}` for tool confirmation
-- `llm/base.py` — `LLMProvider` ABC and `LLMResponse` dataclass
-- `llm/providers/ollama.py` — `OllamaProvider`, calls Ollama's `/api/chat`; supports tool_calls
-- `llm/providers/anthropic.py` — `AnthropicProvider`, async client with OpenAI-format conversion
+- `llm/base.py` — `LLMProvider` ABC (with `chat_stream()` async generator), `LLMResponse` dataclass, `ProviderUnavailable`
+- `llm/events.py` — Streaming event types: `TextDelta`, `ToolStart`, `ToolResult`, `StatusUpdate`, `AgentDone`, `AgentError`
+- `llm/providers/ollama.py` — `OllamaProvider`, non-streaming `chat()` + true token-by-token `chat_stream()` via Ollama streaming API
+- `llm/providers/anthropic.py` — `AnthropicProvider`, non-streaming `chat()` + `chat_stream()` via `client.messages.stream()`
 - `llm/router.py` — `get_coordinator_provider()` (Anthropic or Ollama), `get_specialist_provider()` (always Ollama), `get_fallback_provider()`, active model state
-- `llm/agent.py` — coordinator/specialist agent loop: `run_agent()`, `resume_agent()`, `_run_specialist()`, `_resume_coordinator()`
-- `llm/skills.py` — skill discovery from SKILL.md files: `discover_skills()`, `load_skill_metadata()`, `SkillDef` dataclass
+- `llm/agent.py` — coordinator/specialist agent loop: `run_agent()`, `resume_agent()`, `_run_specialist()`, `_resume_coordinator()`. Supports `event_queue` for streaming and `cancel_event` for per-session cancellation.
+- `llm/skills.py` — skill discovery from SKILL.md files: `discover_skills()`, `load_skill_metadata()`, `SkillDef` dataclass. Cached after first call (`invalidate_skill_cache()` to re-read). Load-time gating via `requires_bins`/`requires_env` in SKILL.md metadata.
 - `llm/specialists.py` — backward-compat shim wrapping skills as `SpecialistDef`/`SPECIALISTS`
 - `llm/config.py` — `AstrynSettings` via pydantic-settings (Ollama, Anthropic, budget, skills dir)
 - `tools/registry.py` — `REGISTRY`, `WRITER_TOOLS`, `REVIEWER_TOOLS`, `NO_PROJECT_TOOLS`, `COORDINATOR_TOOLS`, `READ_ONLY_TOOLS`
@@ -73,13 +75,14 @@ Always do this before committing — if a package is imported but missing from `
 - `services/session.py` — `build_coordinator_prompt()`, session management
 - `services/preferences.py` — `validate_preference()`, `format_preferences_block()`
 - `services/budget.py` — `estimate_cost()`, `can_use_anthropic()`, `record_usage()` for Anthropic API budget tracking
-- `store/domain.py` — `SessionState`, `CommunicationPreferences`, `pending_confirmations`
+- `store/domain.py` — `SessionState`, `CommunicationPreferences`, `pending_confirmations`, `cancel_events`, `cleanup_expired_confirmations()` (10-min TTL)
 - `db/` — Postgres via asyncpg: sessions, session state, communication preferences, tool audit, API usage
 
 ### astryn-telegram
 - `bot.py` — entry point; registers handlers including confirmation, model, project, and preferences callbacks
-- `core_client.py` — async HTTP client for astryn-core
-- `handlers/message.py` — handles text messages; renders confirmation inline keyboards
+- `core_client.py` — async HTTP client for astryn-core (persistent connection pool). `stream_message()` SSE consumer.
+- `formatting.py` — Markdown-to-Telegram-HTML converter
+- `handlers/message.py` — handles text messages; edit-in-place streaming (500ms throttle, 4000-char overflow handling); per-user busy flag + message queue; renders confirmation inline keyboards with `parse_mode="HTML"`
 - `handlers/commands.py` — `/help`, `/clear`, `/status`, `/model`, `/projects`, `/preferences`
 - `handlers/callbacks.py` — inline keyboard handlers for confirmations, model select, project select, preferences
 
@@ -91,7 +94,7 @@ Always do this before committing — if a package is imported but missing from `
   - `code-reviewer` (reviewer tools: read/run/commit — cannot write files)
 - **Writer/Reviewer gate**: code-writer creates and tests code, code-reviewer reviews and commits. Enforces a review step before commits.
 - **Purpose-built git tools**: `create_branch` (writer) and `commit_changes` (reviewer) replace git commands in `run_command`. `git add`/`git commit` via `run_command` are blocked.
-- **Tool sets**: `WRITER_TOOLS` (read + write + run + create_branch), `REVIEWER_TOOLS` (read + run + commit_changes), `READ_ONLY_TOOLS` (browse only, fallback for user skills), `COORDINATOR_TOOLS` (delegate only), `NO_PROJECT_TOOLS` (list/set project)
+- **Tool sets**: `WRITER_TOOLS` (read + write + run + create_branch), `REVIEWER_TOOLS` (read + run + commit_changes), `READ_ONLY_TOOLS` (browse only, fallback for user skills), `COORDINATOR_TOOLS` (delegate + list_projects + set_project + read_file), `NO_PROJECT_TOOLS` (list/set project)
 - **Budget tracking**: daily and monthly USD limits for Anthropic API usage, tracked in `api_usage` table
 - Specialist messages are ephemeral — not persisted to DB. Coordinator history captures the full flow.
 - Confirmation nesting: specialist pauses → coordinator state saved on `PendingConfirmation` → resume resumes specialist then coordinator
