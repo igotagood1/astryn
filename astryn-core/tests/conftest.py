@@ -20,19 +20,21 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from llm.base import LLMResponse
-from store.domain import pending_confirmations
+from store.domain import cancel_events, pending_confirmations
 
 
 @pytest.fixture(autouse=True)
 def _clear_global_state():
     """Reset in-memory global state between tests."""
     pending_confirmations.clear()
+    cancel_events.clear()
     # Reset active model to default
     from llm import router
 
     router._active_model = "test-model"
     yield
     pending_confirmations.clear()
+    cancel_events.clear()
 
 
 @pytest.fixture

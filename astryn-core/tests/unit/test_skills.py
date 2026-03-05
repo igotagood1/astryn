@@ -1,14 +1,25 @@
 """Tests for llm/skills.py — skill discovery, parsing, and formatting."""
 
+import pytest
+
 from llm.skills import (
     SkillDef,
     _parse_simple_yaml,
     _parse_skill_file,
     discover_skills,
     format_available_skills_block,
+    invalidate_skill_cache,
     load_skill_metadata,
 )
 from tools.registry import READ_ONLY_TOOLS, REVIEWER_TOOLS, WRITER_TOOLS
+
+
+@pytest.fixture(autouse=True)
+def _clear_skill_cache():
+    """Invalidate the skill cache before and after each test."""
+    invalidate_skill_cache()
+    yield
+    invalidate_skill_cache()
 
 
 class TestDiscoverSkills:

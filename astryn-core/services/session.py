@@ -15,7 +15,12 @@ from llm.skills import format_available_skills_block, load_skill_metadata
 from prompts.coordinator import COORDINATOR_PROMPT_TEMPLATE
 from prompts.system import SYSTEM_PROMPT
 from services.preferences import format_preferences_block
-from store.domain import CommunicationPreferences, SessionState, pending_confirmations
+from store.domain import (
+    CommunicationPreferences,
+    SessionState,
+    cancel_events,
+    pending_confirmations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +66,12 @@ async def update_state(db: AsyncSession, session_id: str, state: SessionState) -
 
 
 async def clear(db: AsyncSession, session_id: str) -> None:
-    """Delete messages, reset state, and clean up pending confirmations."""
+    """Delete messages, reset state, cancel in-flight requests, and clean up."""
+    # Signal cancellation to any in-flight agent loop
+    if session_id in cancel_events:
+        cancel_events[session_id].set()
+        del cancel_events[session_id]
+
     await repo.clear_session(db, session_id)
 
     stale_ids = [k for k, v in pending_confirmations.items() if v.session_id == session_id]

@@ -1,3 +1,6 @@
+import json
+from collections.abc import AsyncGenerator
+
 import httpx
 
 import config
@@ -53,6 +56,44 @@ async def send_message(message: str, session_id: str) -> dict:
     )
     _raise_for_status(r)
     return r.json()
+
+
+async def stream_message(message: str, session_id: str) -> AsyncGenerator[dict, None]:
+    """Stream chat response via SSE. Yields parsed event dicts.
+
+    Each yielded dict has "event" (str) and the event-specific fields.
+    Event types: text_delta, tool_start, tool_result, status, done, error.
+    """
+    client = get_client()
+    async with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"message": message, "session_id": session_id},
+        timeout=180,
+    ) as response:
+        if response.status_code != 200:
+            # Read the body for error details
+            body = b""
+            async for chunk in response.aiter_bytes():
+                body += chunk
+            try:
+                detail = json.loads(body).get("detail", "Unknown error")
+            except (ValueError, KeyError):
+                detail = body.decode(errors="replace")
+            raise CoreError(detail)
+
+        event_type = None
+        async for line in response.aiter_lines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("event: "):
+                event_type = line[7:]
+            elif line.startswith("data: ") and event_type:
+                data = json.loads(line[6:])
+                data["event"] = event_type
+                yield data
+                event_type = None
 
 
 async def confirm_tool(confirmation_id: str, approved: bool) -> dict:

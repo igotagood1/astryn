@@ -30,6 +30,7 @@ class ChatResponse(BaseModel):
     reply: str
     model: str
     action: ConfirmationAction | None = None
+    fallback_from: str | None = None
 
 
 class ConfirmRequest(BaseModel):

@@ -11,13 +11,15 @@ from tools.registry import COORDINATOR_TOOLS
 
 
 @pytest.fixture(autouse=True)
-def _clear_availability_cache():
-    """Clear the provider availability cache between tests."""
-    from api.routes.chat import _availability_cache
+def _clear_chat_state():
+    """Clear caches and locks between tests."""
+    from api.routes.chat import _availability_cache, _session_locks
 
     _availability_cache.clear()
+    _session_locks.clear()
     yield
     _availability_cache.clear()
+    _session_locks.clear()
 
 
 def _standard_patches(mock_coordinator, mock_specialist, agent_result):

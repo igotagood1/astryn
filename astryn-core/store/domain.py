@@ -9,6 +9,7 @@ don't survive restarts by design.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -67,6 +68,9 @@ class ApiUsageRecord:
 # write/exec tool and removed when the user approves or rejects via POST /confirm.
 # Intentionally not persisted — confirmations expire on restart.
 pending_confirmations: dict[str, PendingConfirmation] = {}
+
+# Per-session cancellation events. Set when /clear fires to abort in-flight requests.
+cancel_events: dict[str, asyncio.Event] = {}
 
 _CONFIRMATION_TTL = 600  # 10 minutes
 

@@ -36,9 +36,16 @@ class TestSpecialistDefinitions:
 
 
 class TestToolSets:
-    def test_coordinator_tools_only_delegate(self):
-        assert len(COORDINATOR_TOOLS) == 1
-        assert COORDINATOR_TOOLS[0]["function"]["name"] == "delegate"
+    def test_coordinator_tools_include_delegate_and_project_tools(self):
+        names = {t["function"]["name"] for t in COORDINATOR_TOOLS}
+        assert "delegate" in names
+        assert "list_projects" in names
+        assert "set_project" in names
+        assert "read_file" in names
+        # Coordinator should NOT have write/exec tools
+        assert "write_file" not in names
+        assert "run_command" not in names
+        assert "apply_diff" not in names
 
     def test_read_only_tools_no_write_ops(self):
         names = {t["function"]["name"] for t in READ_ONLY_TOOLS}

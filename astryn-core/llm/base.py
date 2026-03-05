@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 
 
@@ -41,3 +42,20 @@ class LLMProvider(ABC):
     @property
     @abstractmethod
     def model_name(self) -> str: ...
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        system: str,
+        temperature: float = 0.7,
+        tools: list[dict] | None = None,
+    ) -> AsyncGenerator[str | LLMResponse, None]:
+        """Yield text deltas as strings, then yield the final LLMResponse.
+
+        Default implementation falls back to non-streaming chat().
+        Override in subclasses for true token-by-token streaming.
+        """
+        response = await self.chat(messages, system, temperature, tools)
+        if response.content:
+            yield response.content
+        yield response

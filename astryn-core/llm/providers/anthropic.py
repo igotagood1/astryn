@@ -6,6 +6,7 @@ OpenAI-style dicts; this provider converts to/from Anthropic's format.
 
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 
 from llm.base import LLMProvider, LLMResponse, ProviderUnavailable
 
@@ -40,6 +41,22 @@ class AnthropicProvider(LLMProvider):
             logger.warning("Anthropic API unavailable: %s", e)
             return False
 
+    def _build_kwargs(
+        self, messages: list[dict], system: str, temperature: float, tools: list[dict] | None
+    ) -> dict:
+        """Build the kwargs dict for Anthropic messages.create/stream."""
+        anthropic_messages = _to_anthropic_messages(messages)
+        kwargs: dict = {
+            "model": self._model,
+            "max_tokens": self._max_tokens,
+            "system": system,
+            "messages": anthropic_messages,
+            "temperature": temperature,
+        }
+        if tools:
+            kwargs["tools"] = _to_anthropic_tools(tools)
+        return kwargs
+
     async def chat(
         self,
         messages: list[dict],
@@ -53,16 +70,7 @@ class AnthropicProvider(LLMProvider):
             raise ProviderUnavailable("anthropic package not installed") from e
 
         client = self._get_client()
-        anthropic_messages = _to_anthropic_messages(messages)
-        kwargs: dict = {
-            "model": self._model,
-            "max_tokens": self._max_tokens,
-            "system": system,
-            "messages": anthropic_messages,
-            "temperature": temperature,
-        }
-        if tools:
-            kwargs["tools"] = _to_anthropic_tools(tools)
+        kwargs = self._build_kwargs(messages, system, temperature, tools)
 
         try:
             response = await client.messages.create(**kwargs)
@@ -74,6 +82,36 @@ class AnthropicProvider(LLMProvider):
             raise ProviderUnavailable(f"Anthropic API error ({e.status_code}): {e}") from e
 
         return _from_anthropic_response(response, self._model)
+
+    async def chat_stream(
+        self,
+        messages: list[dict],
+        system: str,
+        temperature: float = 0.7,
+        tools: list[dict] | None = None,
+    ) -> AsyncGenerator[str | LLMResponse, None]:
+        """Stream tokens from Anthropic. Yields text deltas, then the final LLMResponse."""
+        try:
+            import anthropic as anthropic_mod
+        except ImportError as e:
+            raise ProviderUnavailable("anthropic package not installed") from e
+
+        client = self._get_client()
+        kwargs = self._build_kwargs(messages, system, temperature, tools)
+
+        try:
+            async with client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
+
+                response = await stream.get_final_message()
+                yield _from_anthropic_response(response, self._model)
+        except anthropic_mod.RateLimitError as e:
+            raise ProviderUnavailable(f"Anthropic rate limit: {e}") from e
+        except anthropic_mod.APIConnectionError as e:
+            raise ProviderUnavailable(f"Anthropic connection error: {e}") from e
+        except anthropic_mod.APIStatusError as e:
+            raise ProviderUnavailable(f"Anthropic API error ({e.status_code}): {e}") from e
 
 
 def _to_anthropic_messages(messages: list[dict]) -> list[dict]:

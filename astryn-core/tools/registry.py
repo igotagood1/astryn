@@ -183,8 +183,12 @@ NO_PROJECT_TOOLS: list[dict] = [
     t.schema for name, t in REGISTRY.items() if name in _NO_PROJECT_TOOL_NAMES
 ]
 
-# Coordinator only sees the delegate tool — it cannot call file/code tools directly.
-COORDINATOR_TOOLS: list[dict] = [REGISTRY["delegate"].schema]
+# Coordinator tools: delegate + direct access to project management and file reading.
+# This avoids unnecessary specialist round-trips for simple operations.
+_COORDINATOR_TOOL_NAMES = {"delegate", "list_projects", "set_project", "read_file"}
+COORDINATOR_TOOLS: list[dict] = [
+    t.schema for name, t in REGISTRY.items() if name in _COORDINATOR_TOOL_NAMES
+]
 
 # Read-only tools — fallback for user-defined skills.
 _READ_ONLY_TOOL_NAMES = {

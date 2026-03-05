@@ -14,6 +14,7 @@ from api.routes.health import router as health_router
 from api.routes.models import router as models_router
 from api.routes.preferences import router as preferences_router
 from api.routes.projects import router as projects_router
+from api.routes.stream import router as stream_router
 from api.routes.tools import router as tools_router
 from db.engine import engine
 
@@ -91,9 +92,6 @@ async def lifespan(app: FastAPI):
         if provider == "anthropic"
         else settings.astryn_default_model
     )
-    has_key = bool(settings.anthropic_api_key)
-    print(f"[DIAG] Coordinator provider: {provider} (model: {model})", flush=True)
-    print(f"[DIAG] Anthropic API key set: {has_key}", flush=True)
     logger.info("Coordinator provider: %s (model: %s)", provider, model)
 
     yield
@@ -106,6 +104,7 @@ app = FastAPI(title="Astryn Core", version="0.3.0", lifespan=lifespan)
 
 app.include_router(health_router)
 app.include_router(chat_router)
+app.include_router(stream_router)
 app.include_router(tools_router)
 app.include_router(models_router)
 app.include_router(projects_router)

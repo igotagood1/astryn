@@ -66,9 +66,7 @@ async def handle_confirmation(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     except httpx.ConnectError:
         typing_task.cancel()
-        await query.message.reply_text(
-            "🔌 Can't reach the backend. Is astryn-core running?"
-        )
+        await query.message.reply_text("🔌 Can't reach the backend. Is astryn-core running?")
     except Exception as e:
         typing_task.cancel()
         logger.error("Error processing confirmation %s: %s", confirmation_id, e)
@@ -222,9 +220,7 @@ async def handle_pref_set(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         await update_preference(session_id, field, actual_value)
         label = _PREF_LABELS.get(field, field)
-        await query.edit_message_text(
-            f"✅ {label} set to <b>{value}</b>", parse_mode="HTML"
-        )
+        await query.edit_message_text(f"✅ {label} set to <b>{value}</b>", parse_mode="HTML")
     except CoreError as e:
         await query.edit_message_text(f"❌ {e}")
     except Exception as e:
