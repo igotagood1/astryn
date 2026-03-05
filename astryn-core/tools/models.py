@@ -5,6 +5,21 @@ class ListProjects(BaseModel):
     """List all available projects in ~/repos."""
 
 
+class CreateProject(BaseModel):
+    """Create a new project directory in ~/repos and set it as active.
+
+    Creates the folder, initializes a git repository, and switches to it.
+    Requires confirmation.
+    """
+
+    name: str = Field(
+        min_length=1,
+        description=(
+            "Name for the new project (e.g., 'my-new-app'). Letters, numbers, hyphens, underscores."
+        ),
+    )
+
+
 class SetProject(BaseModel):
     """Set the active project for this session.
 
@@ -122,6 +137,7 @@ class Delegate(BaseModel):
 
 type AnyTool = (
     ListProjects
+    | CreateProject
     | SetProject
     | ListFiles
     | ReadFile
@@ -143,6 +159,8 @@ def parse_tool(name: str, args: dict) -> AnyTool:
     match name:
         case "list_projects":
             return ListProjects.model_validate(args)
+        case "create_project":
+            return CreateProject.model_validate(args)
         case "set_project":
             return SetProject.model_validate(args)
         case "list_files":

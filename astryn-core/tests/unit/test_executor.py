@@ -132,6 +132,52 @@ class TestExecuteTool:
         assert "Security error" in result
 
 
+class TestCreateProject:
+    async def test_creates_directory(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": "my-project"}, state)
+        assert (tmp_path / "my-project").is_dir()
+        assert state.active_project == "my-project"
+        assert "Created" in result
+
+    async def test_initializes_git(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            await execute_tool("create_project", {"name": "git-proj"}, state)
+        assert (tmp_path / "git-proj" / ".git").is_dir()
+
+    async def test_existing_project_rejected(self, tmp_path):
+        (tmp_path / "existing").mkdir()
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": "existing"}, state)
+        assert "already exists" in result
+        assert state.active_project is None
+
+    async def test_invalid_name_rejected(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": "../escape"}, state)
+        assert "Invalid" in result
+        assert state.active_project is None
+
+    async def test_slash_in_name_rejected(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": "foo/bar"}, state)
+        assert "Invalid" in result
+
+    async def test_dot_start_rejected(self, tmp_path):
+        state = SessionState()
+        with _patch_repos_root(tmp_path):
+            result = await execute_tool("create_project", {"name": ".hidden"}, state)
+        assert "Invalid" in result
+
+    async def test_requires_confirmation(self):
+        assert requires_confirmation("create_project", {"name": "test"})
+
+
 class TestGrepFiles:
     async def test_finds_matches(self, tmp_path):
         proj = tmp_path / "proj"

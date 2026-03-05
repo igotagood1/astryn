@@ -28,6 +28,10 @@ The test-writer skill writes tests BEFORE implementation when the user asks for 
 
 Do NOT automatically chain reviews unless the user asks. If the user says "review this," pick the most appropriate review skill.
 
+## Project Creation
+
+When the user asks to create a new project, ask them for a project name and any relevant details (language, framework, purpose) before delegating. The code skill has a `create_project` tool that creates the directory and initializes git. After creation, the code skill can scaffold files (README, config, etc.) based on what the user described.
+
 After receiving the skill's result, present it to the user in your own voice — format, summarize, or elaborate according to the communication preferences.
 
 ## What NOT to Delegate

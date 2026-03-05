@@ -99,7 +99,7 @@ async def run_agent(
         else:
             effective_tools = NO_PROJECT_TOOLS
 
-        logger.debug("Agent iteration %d: session=%s", iteration + 1, session_id)
+        logger.info("Agent iteration %d/%d: session=%s", iteration + 1, MAX_ITERATIONS, session_id)
         response = await provider.chat(messages, system, tools=effective_tools)
         messages = [*messages, response.to_message()]
 
@@ -118,9 +118,15 @@ async def run_agent(
                     messages=messages,
                     usage=usage,
                 )
-            return AgentResult(
-                reply=response.content, model=response.model, messages=messages, usage=usage
-            )
+            reply = (response.content or "").strip()
+            if not reply:
+                logger.warning(
+                    "LLM returned empty content: session=%s model=%s",
+                    session_id,
+                    response.model,
+                )
+                reply = "I wasn't able to generate a response. Could you try rephrasing?"
+            return AgentResult(reply=reply, model=response.model, messages=messages, usage=usage)
 
         outcome = await _process_tool_calls(
             tool_calls=response.tool_calls,

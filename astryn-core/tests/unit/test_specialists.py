@@ -2,7 +2,13 @@
 
 from llm.specialists import SPECIALISTS, SpecialistDef
 from prompts.specialists.loader import CODE_PROMPT, EXPLORE_PROMPT, PLAN_PROMPT
-from tools.registry import COORDINATOR_TOOLS, READ_ONLY_TOOLS, READ_WRITE_TOOLS, TOOLS
+from tools.registry import (
+    COORDINATOR_TOOLS,
+    NO_PROJECT_TOOLS,
+    READ_ONLY_TOOLS,
+    READ_WRITE_TOOLS,
+    TOOLS,
+)
 
 
 class TestSpecialistDefinitions:
@@ -90,6 +96,20 @@ class TestToolSets:
     def test_read_write_excludes_delegate(self):
         names = {t["function"]["name"] for t in READ_WRITE_TOOLS}
         assert "delegate" not in names
+
+    def test_no_project_tools_has_create_project(self):
+        names = {t["function"]["name"] for t in NO_PROJECT_TOOLS}
+        assert "create_project" in names
+        assert "list_projects" in names
+        assert "set_project" in names
+
+    def test_full_tools_has_create_project(self):
+        names = {t["function"]["name"] for t in TOOLS}
+        assert "create_project" in names
+
+    def test_read_only_excludes_create_project(self):
+        names = {t["function"]["name"] for t in READ_ONLY_TOOLS}
+        assert "create_project" not in names
 
 
 class TestPromptFiles:

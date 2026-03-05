@@ -23,6 +23,14 @@ router = APIRouter()
 
 @router.post("/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
+    # Logging diagnostics — remove once logging is fixed
+    import sys
+    root = logging.getLogger()
+    print(f"[DIAG] POST /chat received: session={req.session_id}", flush=True)
+    print(f"[DIAG] Root logger: level={root.level} handlers={root.handlers}", flush=True)
+    print(f"[DIAG] Chat logger: level={logger.level} effective={logger.getEffectiveLevel()} propagate={logger.propagate} handlers={logger.handlers}", flush=True)
+    print(f"[DIAG] sys.stderr={sys.stderr} sys.stdout={sys.stdout}", flush=True)
+    logger.info("POST /chat received: session=%s", req.session_id)
     try:
         state = await session_service.ensure_session(db, req.session_id)
     except SQLAlchemyError as exc:
@@ -34,18 +42,24 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
 
     coordinator = get_coordinator_provider()
     specialist = get_specialist_provider()
+    print(f"[DIAG] coordinator={coordinator.model_name}", flush=True)
 
     # Budget check: if Anthropic budget is exhausted, fall back to Ollama
     if coordinator.model_name.startswith(
         "anthropic/"
     ) and not await budget_service.can_use_anthropic(db):
+        print("[DIAG] Anthropic budget exhausted, falling back to Ollama", flush=True)
         logger.info("Anthropic budget exhausted, falling back to Ollama")
         coordinator = get_fallback_provider()
 
-    if not await coordinator.is_available():
+    available = await coordinator.is_available()
+    print(f"[DIAG] coordinator.is_available()={available}", flush=True)
+
+    if not available:
         # If coordinator is Anthropic and unavailable, try Ollama fallback
         fallback = get_fallback_provider()
         if fallback.model_name != coordinator.model_name and await fallback.is_available():
+            print(f"[DIAG] Falling back to {fallback.model_name}", flush=True)
             logger.warning("Coordinator unavailable, falling back to %s", fallback.model_name)
             coordinator = fallback
         else:
@@ -53,6 +67,7 @@ async def chat(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                 status_code=503, detail="LLM provider is not available. Is Ollama running?"
             )
 
+    print(f"[DIAG] Using model: {coordinator.model_name}", flush=True)
     logger.info("Chat request: session=%s model=%s", req.session_id, coordinator.model_name)
 
     try:

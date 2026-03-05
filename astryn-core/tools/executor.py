@@ -10,6 +10,7 @@ from store.domain import SessionState
 from tools.models import (
     AnyTool,
     ApplyDiff,
+    CreateProject,
     Delegate,
     GrepFiles,
     ListFiles,
@@ -34,6 +35,27 @@ async def list_projects() -> str:
     if not projects:
         return "No projects found in ~/repos."
     return "Projects in ~/repos:\n" + "\n".join(f"- {p}" for p in sorted(projects))
+
+
+_PROJECT_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+async def create_project(name: str, session_state: SessionState) -> str:
+    if not _PROJECT_NAME_RE.match(name):
+        return (
+            f"Invalid project name '{name}'. "
+            "Use letters, numbers, hyphens, underscores, and dots. "
+            "Must start with a letter or number."
+        )
+    path = REPOS_ROOT / name
+    if path.exists():
+        return f"Project '{name}' already exists. Use set_project to switch to it."
+    path.mkdir()
+    subprocess.run(["git", "init"], cwd=str(path), capture_output=True, timeout=10)
+    session_state.active_project = name
+    return (
+        f"Created project '{name}' in ~/repos with git initialized. It's now your active project."
+    )
 
 
 async def set_project(name: str, session_state: SessionState) -> str:
@@ -241,6 +263,8 @@ async def execute_tool(
         match tool:
             case ListProjects():
                 return await list_projects()
+            case CreateProject(name=name):
+                return await create_project(name, session_state)
             case SetProject(name=name):
                 return await set_project(name, session_state)
             case ListFiles(path=path):

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from tools.models import (
     ApplyDiff,
+    CreateProject,
     Delegate,
     GrepFiles,
     ListFiles,
@@ -85,6 +86,13 @@ REGISTRY: dict[str, ToolDef] = {
     "list_projects": ToolDef(
         schema=_schema_from_model("list_projects", ListProjects),
     ),
+    "create_project": ToolDef(
+        schema=_schema_from_model("create_project", CreateProject),
+        requires_confirmation=True,
+        build_preview=lambda args: (
+            f"Create project `{args.get('name', '?')}` in ~/repos and initialize git."
+        ),
+    ),
     "set_project": ToolDef(
         schema=_schema_from_model("set_project", SetProject),
     ),
@@ -135,7 +143,7 @@ TOOLS: list[dict] = [t.schema for name, t in REGISTRY.items() if name not in _SP
 # Minimal tool set for sessions with no active project.
 # The user can still list and select projects; file/code tools
 # become available once a project is set.
-_NO_PROJECT_TOOL_NAMES = {"list_projects", "set_project"}
+_NO_PROJECT_TOOL_NAMES = {"list_projects", "create_project", "set_project"}
 NO_PROJECT_TOOLS: list[dict] = [
     t.schema for name, t in REGISTRY.items() if name in _NO_PROJECT_TOOL_NAMES
 ]

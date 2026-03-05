@@ -540,6 +540,80 @@ class TestTestWriterDelegation:
         assert specialist_tools is READ_WRITE_TOOLS
 
 
+class TestEmptyReplyFallback:
+    async def test_empty_content_gets_fallback(self, mock_db):
+        """Empty LLM content returns a fallback message, not empty string."""
+        provider = AsyncMock()
+        provider.model_name = "ollama/test-model"
+        provider.chat = AsyncMock(
+            return_value=LLMResponse(
+                content="",
+                model="ollama/test-model",
+                provider="ollama",
+                tool_calls=[],
+            ),
+        )
+
+        with _patch_repo():
+            result = await run_agent(
+                provider=provider,
+                messages=[{"role": "user", "content": "what can you do?"}],
+                system="system",
+                session_id="test-session",
+                session_state=SessionState(),
+                db=mock_db,
+            )
+
+        assert result.reply
+        assert result.pending is None
+
+    async def test_whitespace_only_gets_fallback(self, mock_db):
+        """Whitespace-only LLM content returns a fallback message."""
+        provider = AsyncMock()
+        provider.model_name = "ollama/test-model"
+        provider.chat = AsyncMock(
+            return_value=LLMResponse(
+                content="   \n  ",
+                model="ollama/test-model",
+                provider="ollama",
+                tool_calls=[],
+            ),
+        )
+
+        with _patch_repo():
+            result = await run_agent(
+                provider=provider,
+                messages=[{"role": "user", "content": "hello"}],
+                system="system",
+                session_id="test-session",
+                session_state=SessionState(),
+                db=mock_db,
+            )
+
+        assert result.reply
+        assert result.reply.strip()
+
+    async def test_normal_content_unchanged(self, mock_db):
+        """Non-empty LLM content is returned as-is."""
+        provider = AsyncMock()
+        provider.model_name = "ollama/test-model"
+        provider.chat = AsyncMock(
+            return_value=_text_response("Here are my capabilities."),
+        )
+
+        with _patch_repo():
+            result = await run_agent(
+                provider=provider,
+                messages=[{"role": "user", "content": "what can you do?"}],
+                system="system",
+                session_id="test-session",
+                session_state=SessionState(),
+                db=mock_db,
+            )
+
+        assert result.reply == "Here are my capabilities."
+
+
 class TestDelegateModelValidation:
     def test_delegate_empty_skill_rejected(self):
         """Delegate model rejects empty skill field."""
