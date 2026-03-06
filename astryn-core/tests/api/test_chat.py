@@ -58,6 +58,22 @@ class TestChatEndpoint:
         )
         assert resp.status_code == 401
 
+    async def test_chat_rejects_empty_message(self, client, auth_headers):
+        resp = await client.post(
+            "/chat",
+            json={"message": ""},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+
+    async def test_chat_rejects_oversized_message(self, client, auth_headers):
+        resp = await client.post(
+            "/chat",
+            json={"message": "a" * 32_001},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+
     async def test_chat_returns_reply(self, client, auth_headers, mock_provider):
         agent_result = AgentResult(
             reply="Hello from LLM",

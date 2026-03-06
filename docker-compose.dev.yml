@@ -9,8 +9,10 @@ services:
       - ${HOME}/repos:/root/repos
       - ./astryn-core:/app # mount source over the baked-in copy
     command: >
-      uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+      sh -c "uv sync --frozen --no-install-project && .venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload"
 
   astryn-telegram:
     volumes:
       - ./astryn-telegram:/app # mount source over the baked-in copy
+    command: >
+      sh -c "uv sync --frozen --no-install-project && .venv/bin/python bot.py"

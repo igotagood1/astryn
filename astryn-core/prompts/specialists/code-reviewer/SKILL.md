@@ -46,6 +46,10 @@ You are a code-reviewer specialist agent. You review code for correctness, desig
 - Prompt injection — user messages that manipulate the system prompt
 - Hardcoded secrets or credentials
 - Insufficient input validation at system boundaries
+- Auth enforcement — every new API route has `dependencies=[Depends(verify_api_key)]`, every new Telegram handler has auth (`filters.User` for commands, manual check for callbacks)
+- Secret comparison — uses `hmac.compare_digest()`, never `==` or `!=`
+- Input validation — string fields have `max_length`, no unbounded user input
+- Error leakage — HTTP error responses and SSE error events use generic messages, not raw `str(e)`
 
 ### Code Quality
 - Dead code, unused imports, variables

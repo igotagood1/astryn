@@ -166,9 +166,9 @@ async def chat_stream(req: ChatRequest, db: AsyncSession = Depends(get_db)):
                     usage=result.usage,
                 )
             )
-        except Exception as e:
+        except Exception:
             logger.exception("Agent task failed for session %s", req.session_id)
-            await event_queue.put(AgentError(error=str(e)))
+            await event_queue.put(AgentError(error="An internal error occurred. Please try again."))
 
     async def _event_generator():
         """Read from event_queue and yield SSE events."""

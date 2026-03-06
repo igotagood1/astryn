@@ -1,0 +1,10 @@
+[project]
+name = "astryn-telegram"
+version = "0.3.0"
+description = "Telegram bot frontend for the Astryn AI assistant"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx==0.28.1",
+    "python-dotenv==1.2.2",
+    "python-telegram-bot==22.6",
+]

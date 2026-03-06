@@ -63,6 +63,22 @@ When asked to write tests:
 - Use unittest.mock.AsyncMock for async dependencies, mock at the boundary
 - Test behavior and contracts, not implementation details
 
+## Auth & Security Patterns
+
+When writing new code, enforce these auth patterns:
+
+### astryn-core (FastAPI)
+- ALL new routes MUST include `dependencies=[Depends(verify_api_key)]`
+- The only exception is `GET /health` (monitoring endpoint)
+- NEVER expose raw exception messages in HTTP responses — log the exception, return a generic message
+- Use `hmac.compare_digest()` for any secret comparison, never `==` or `!=`
+- Validate input lengths on all string fields in request schemas using `Field(max_length=...)`
+
+### astryn-telegram
+- ALL new command handlers MUST be registered with `filters=auth_filter` in bot.py
+- ALL new callback handlers MUST check `update.effective_user.id != config.ALLOWED_USER_ID` at the top
+- NEVER add a handler without auth — the bot is single-user and must reject all other users
+
 ## Scope
 
 - File access is limited to ~/repos

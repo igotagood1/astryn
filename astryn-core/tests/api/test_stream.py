@@ -228,10 +228,10 @@ class TestStreamEndpoint:
         assert status_events[0]["data"]["message"] == "Delegating to code-writer..."
 
     async def test_stream_emits_error_on_failure(self, client, auth_headers, mock_provider):
-        """When run_agent raises, the stream emits an event: error."""
+        """When run_agent raises, the stream emits a generic error (no internal details)."""
 
         async def _raise(**kwargs):
-            raise RuntimeError("Something broke")
+            raise RuntimeError("Something broke with /secret/path/db.py")
 
         run_mock = AsyncMock(side_effect=_raise)
 
@@ -248,7 +248,9 @@ class TestStreamEndpoint:
         events = _parse_sse_events(resp.text)
         error_events = [e for e in events if e["event"] == "error"]
         assert len(error_events) == 1
-        assert "Something broke" in error_events[0]["data"]["error"]
+        # Must NOT leak the raw exception message
+        assert "/secret/path" not in error_events[0]["data"]["error"]
+        assert "internal error" in error_events[0]["data"]["error"].lower()
 
     async def test_stream_503_when_provider_down(self, client, auth_headers, mock_provider):
         """When the coordinator and fallback are both unavailable, returns 503."""
