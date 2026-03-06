@@ -127,7 +127,7 @@ This mounts the source code as volumes so changes are picked up without rebuildi
 make restart-telegram
 ```
 
-Run `make build` only when you change `requirements.txt` — everything else is handled by the mounts.
+Run `make build` only when you change `pyproject.toml` or `uv.lock` — everything else is handled by the mounts.
 
 ---
 

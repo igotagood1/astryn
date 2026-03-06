@@ -68,20 +68,26 @@ logger = logging.getLogger(__name__)
 def main():
     app = ApplicationBuilder().token(config.TELEGRAM_BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("clear", cmd_clear))
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("model", cmd_model))
-    app.add_handler(CommandHandler("projects", cmd_projects))
-    app.add_handler(CommandHandler("preferences", cmd_preferences))
-    app.add_handler(CommandHandler("pull", handle_pull_command))
+    # Gate all command and message handlers to the allowed user at the framework
+    # level. Updates from other users are silently dropped before reaching any
+    # handler code.  CallbackQueryHandler does not support filters, so callback
+    # handlers still check ALLOWED_USER_ID manually.
+    auth_filter = filters.User(user_id=config.ALLOWED_USER_ID)
+
+    app.add_handler(CommandHandler("help", cmd_help, filters=auth_filter))
+    app.add_handler(CommandHandler("clear", cmd_clear, filters=auth_filter))
+    app.add_handler(CommandHandler("status", cmd_status, filters=auth_filter))
+    app.add_handler(CommandHandler("model", cmd_model, filters=auth_filter))
+    app.add_handler(CommandHandler("projects", cmd_projects, filters=auth_filter))
+    app.add_handler(CommandHandler("preferences", cmd_preferences, filters=auth_filter))
+    app.add_handler(CommandHandler("pull", handle_pull_command, filters=auth_filter))
     app.add_handler(CallbackQueryHandler(handle_confirmation, pattern=r"^confirm:"))
     app.add_handler(CallbackQueryHandler(handle_model_select, pattern=r"^model_select:"))
     app.add_handler(CallbackQueryHandler(handle_model_pull_prompt, pattern=r"^model_pull_prompt$"))
     app.add_handler(CallbackQueryHandler(handle_project_select, pattern=r"^project:"))
     app.add_handler(CallbackQueryHandler(handle_pref_menu, pattern=r"^pref_menu:"))
     app.add_handler(CallbackQueryHandler(handle_pref_set, pattern=r"^pref_set:"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & auth_filter, handle_message))
 
     app.post_shutdown = _on_shutdown
 

@@ -27,6 +27,18 @@ class TestChatRequest:
         with pytest.raises(ValidationError):
             ChatRequest()
 
+    def test_empty_message_fails(self):
+        with pytest.raises(ValidationError):
+            ChatRequest(message="")
+
+    def test_message_at_max_length(self):
+        req = ChatRequest(message="a" * 32_000)
+        assert len(req.message) == 32_000
+
+    def test_message_over_max_length_fails(self):
+        with pytest.raises(ValidationError):
+            ChatRequest(message="a" * 32_001)
+
 
 class TestChatResponse:
     def test_plain_reply(self):

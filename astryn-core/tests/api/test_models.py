@@ -1,4 +1,4 @@
-"""Tests for GET /models and POST /models/active."""
+"""Tests for GET /models, POST /models/active, and POST /models/pull."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -53,3 +53,22 @@ class TestModelsEndpoint:
     async def test_set_model_requires_auth(self, client):
         resp = await client.post("/models/active", json={"model": "x"})
         assert resp.status_code == 422
+
+    async def test_pull_model_error_does_not_leak_details(self, client, auth_headers):
+        """When pull_model raises, the error detail must not expose internal info."""
+        mock_provider = AsyncMock()
+        mock_provider.is_available = AsyncMock(return_value=True)
+        mock_provider.pull_model = AsyncMock(
+            side_effect=RuntimeError("connection to /internal/socket failed")
+        )
+
+        with patch("api.routes.models.OllamaProvider", return_value=mock_provider):
+            resp = await client.post(
+                "/models/pull",
+                json={"model": "bad-model"},
+                headers=auth_headers,
+            )
+
+        assert resp.status_code == 500
+        assert "/internal/socket" not in resp.json()["detail"]
+        assert "failed" in resp.json()["detail"].lower()

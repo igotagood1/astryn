@@ -55,7 +55,10 @@ async def pull_model(req: PullModelRequest):
         status = await ollama.pull_model(req.model)
     except Exception as e:
         logger.error("Model pull failed: %s error=%s", req.model, e)
-        raise HTTPException(status_code=500, detail=f"Pull failed: {e}") from e
+        raise HTTPException(
+            status_code=500,
+            detail="Model pull failed. Check server logs for details.",
+        ) from e
 
     logger.info("Model pulled: %s status=%s", req.model, status)
     return {"model": req.model, "status": status}

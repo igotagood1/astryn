@@ -23,17 +23,16 @@ python bot.py
 
 **Install dependencies** (from within each service directory):
 ```bash
-uv pip install -r requirements.txt          # production only
-uv pip install -r requirements-dev.txt      # dev + test (includes prod)
+uv sync              # production deps only
+uv sync --extra dev  # dev + test (includes prod)
 ```
 
-**After adding a new package**, update the appropriate requirements file from within the service directory:
+**After adding a new package**, update `pyproject.toml` and regenerate the lockfile:
 ```bash
-uv pip install <package>
-# Runtime dependency → add to requirements.txt
-# Dev/test dependency (pytest, ruff, etc.) → add to requirements-dev.txt
+uv add <package>              # runtime dependency → [project.dependencies]
+uv add --dev <package>        # dev/test dependency → [project.optional-dependencies.dev]
 ```
-Always do this before committing — if a package is imported but missing from `requirements.txt`, the service will fail to start in a clean environment. The Dockerfile only installs `requirements.txt` (production deps).
+This updates `pyproject.toml` and `uv.lock` automatically. Always commit both files. The Dockerfile installs from the lockfile (`uv sync --frozen --no-dev`).
 
 ## Phase Status
 
@@ -103,6 +102,19 @@ Always do this before committing — if a package is imported but missing from `
 - Write/exec tool calls require Telegram inline keyboard confirmation before executing
 - Adding a new skill: create `prompts/specialists/<name>/SKILL.md` with YAML frontmatter (name, description, metadata.tools). Discovered automatically.
 - Adding a new LLM provider: implement `LLMProvider` in `llm/providers/`, add routing logic in `router.py`
+
+### Auth Patterns (MUST follow for new code)
+
+#### astryn-core
+- ALL new routes MUST include `dependencies=[Depends(verify_api_key)]` — the only exception is `GET /health`
+- `verify_api_key` uses `hmac.compare_digest()` for constant-time comparison — NEVER use `==`/`!=` for secret comparison
+- Validate input lengths on all string fields in request schemas using `Field(max_length=...)`
+- NEVER expose raw exception messages in HTTP responses — log internally, return generic messages to clients
+
+#### astryn-telegram
+- ALL new command handlers MUST be registered with `filters=auth_filter` in `bot.py` (framework-level `filters.User` gating)
+- ALL new callback handlers MUST check `update.effective_user.id != config.ALLOWED_USER_ID` at the top (CallbackQueryHandler does not support filters)
+- NEVER add a handler without auth — the bot is single-user and must reject all other users
 
 ## Branching Rules
 
